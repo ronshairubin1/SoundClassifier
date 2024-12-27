@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="process-container">
+    <h2><i class="fas fa-tasks"></i> Recording Process</h2>
+    
+    <div class="process-steps">
+        <div class="step {% if active_step >= 1 %}active{% endif %}">
+            <div class="step-number">1</div>
+            <div class="step-content">
+                <h3>Record Sounds</h3>
+                <p>Record yourself saying each sound from the dictionary.</p>
+                {% if not has_recordings %}
+                    <a href="{{ url_for('index') }}" class="btn btn-primary">
+                        <i class="fas fa-microphone"></i> Start Recording
+                    </a>
+                {% else %}
+                    <span class="badge bg-success"><i class="fas fa-check"></i> Completed</span>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="step {% if active_step >= 2 %}active{% endif %}">
+            <div class="step-number">2</div>
+            <div class="step-content">
+                <h3>Verify Recordings</h3>
+                <p>Listen to each recording and verify its quality.</p>
+                {% if has_recordings and not has_verified %}
+                    <a href="{{ url_for('verify_chunks', timestamp='latest') }}" class="btn btn-primary">
+                        <i class="fas fa-check-circle"></i> Start Verifying
+                    </a>
+                {% elif has_verified %}
+                    <span class="badge bg-success"><i class="fas fa-check"></i> Completed</span>
+                {% else %}
+                    <span class="badge bg-secondary">Not Available</span>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="step {% if active_step >= 3 %}active{% endif %}">
+            <div class="step-number">3</div>
+            <div class="step-content">
+                <h3>Review Collection</h3>
+                <p>Review your collection of verified recordings.</p>
+                {% if has_verified %}
+                    <a href="{{ url_for('list_recordings') }}" class="btn btn-primary">
+                        <i class="fas fa-list"></i> View Recordings
+                    </a>
+                {% else %}
+                    <span class="badge bg-secondary">Not Available</span>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.process-container {
+    max-width: 800px;
+    margin: 2rem auto;
+    padding: 2rem;
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.process-steps {
+    display: flex;
+    flex-direction: column;
+    gap: 2rem;
+    margin-top: 2rem;
+}
+
+.step {
+    display: flex;
+    gap: 1rem;
+    padding: 1rem;
+    border: 1px solid #dee2e6;
+    border-radius: 8px;
+    opacity: 0.7;
+    transition: all 0.3s ease;
+}
+
+.step.active {
+    opacity: 1;
+    border-color: #007bff;
+    background: #f8f9fa;
+}
+
+.step-number {
+    width: 40px;
+    height: 40px;
+    background: #007bff;
+    color: white;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    font-size: 1.2em;
+}
+
+.step-content {
+    flex: 1;
+}
+
+.step-content h3 {
+    margin: 0 0 0.5rem 0;
+    font-size: 1.2em;
+}
+
+.step-content p {
+    margin: 0 0 1rem 0;
+    color: #666;
+}
+
+.badge {
+    padding: 0.5rem 1rem;
+}
+</style>
+{% endblock %} 

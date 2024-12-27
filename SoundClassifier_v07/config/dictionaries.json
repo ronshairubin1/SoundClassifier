@@ -1,0 +1,80 @@
+{
+    "dictionaries": [
+        {
+            "name": "Default",
+            "sounds": [
+                "ah",
+                "eh",
+                "ee",
+                "oh",
+                "oo",
+                "bah",
+                "beh",
+                "bee",
+                "boh",
+                "boo",
+                "mah",
+                "meh",
+                "mee",
+                "moh",
+                "moo",
+                "lah",
+                "leh",
+                "lee",
+                "loh",
+                "loo"
+            ]
+        },
+        {
+            "name": "Michal Base",
+            "sounds": [
+                "ah",
+                "eh",
+                "ee",
+                "oh",
+                "oo",
+                "bah",
+                "beh",
+                "bee",
+                "boh",
+                "boo",
+                "mah",
+                "meh",
+                "mee",
+                "moh",
+                "moo",
+                "lah",
+                "leh",
+                "lee",
+                "loh",
+                "loo"
+            ]
+        },
+        {
+            "name": "Michal Plus Ooah",
+            "sounds": [
+                "ah",
+                "eh",
+                "ee",
+                "oh",
+                "oo",
+                "bah",
+                "beh",
+                "bee",
+                "boh",
+                "boo",
+                "mah",
+                "meh",
+                "mee",
+                "moh",
+                "moo",
+                "lah",
+                "leh",
+                "lee",
+                "loh",
+                "loo",
+                "ooah"
+            ]
+        }
+    ]
+}

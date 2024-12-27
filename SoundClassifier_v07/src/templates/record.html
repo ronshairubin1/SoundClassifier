@@ -1,0 +1,184 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="record-container">
+    <h2><i class="fas fa-microphone"></i> Record Sounds</h2>
+    <p class="instructions">
+        1. Select a sound from the list<br>
+        2. Click "Start Recording" and say the sound clearly, with brief pauses<br>
+        3. Click "Stop Recording" when done<br>
+        4. Verify each recorded sound chunk
+        <small class="text-muted d-block mt-2">
+            Tip: For best results, say the sound multiple times (3-7 recommended) with clear pauses between each.
+            The system will automatically detect and separate the sounds.
+        </small>
+    </p>
+
+    <div class="record-form">
+        <div class="form-group mb-4">
+            <label for="sound"><i class="fas fa-music"></i> Select Sound:</label>
+            <select id="sound" name="sound" class="form-control" required>
+                <option value="">Choose a sound...</option>
+                {% for sound in sounds %}
+                <option value="{{ sound }}">{{ sound }}</option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <div class="recording-controls">
+            <button id="startRecording" class="btn btn-primary">
+                <i class="fas fa-microphone"></i> Start Recording
+            </button>
+            <button id="stopRecording" class="btn btn-danger" style="display: none;">
+                <i class="fas fa-stop-circle"></i> Stop Recording
+            </button>
+        </div>
+
+        <div id="recordingStatus" class="recording-status" style="display: none;">
+            <div class="pulse-ring"></div>
+            <span>Recording in progress...</span>
+        </div>
+    </div>
+</div>
+
+<style>
+.record-container {
+    max-width: 600px;
+    margin: 2rem auto;
+    padding: 2rem;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    background-color: #fff;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.instructions {
+    background-color: #f8f9fa;
+    padding: 1rem;
+    border-radius: 4px;
+    margin-bottom: 2rem;
+    color: #666;
+}
+
+.recording-status {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-top: 1rem;
+    color: #dc3545;
+}
+
+.pulse-ring {
+    width: 1rem;
+    height: 1rem;
+    background: #dc3545;
+    border-radius: 50%;
+    animation: pulse 1s infinite;
+}
+
+@keyframes pulse {
+    0% { transform: scale(0.95); opacity: 0.9; }
+    70% { transform: scale(1.1); opacity: 0.8; }
+    100% { transform: scale(0.95); opacity: 0.9; }
+}
+
+.recording-controls {
+    display: flex;
+    gap: 1rem;
+}
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Declare variables in a scope to avoid global conflicts
+const recordingApp = {
+    mediaRecorder: null,
+    audioChunks: [],
+
+    async playBeep() {
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const oscillator = audioContext.createOscillator();
+        oscillator.type = 'sine';
+        oscillator.frequency.setValueAtTime(880, audioContext.currentTime); // A5 note
+        oscillator.connect(audioContext.destination);
+        oscillator.start();
+        oscillator.stop(audioContext.currentTime + 0.2); // 200ms beep
+        return new Promise(resolve => setTimeout(resolve, 220)); // Wait for beep + 20ms
+    },
+
+    async startRecording() {
+        const sound = document.querySelector('select[name="sound"]').value;
+        if (!sound) {
+            alert('Please select a sound first');
+            return;
+        }
+
+        try {
+            await this.playBeep(); // Play beep before starting recording
+            console.log('Starting recording for sound:', sound);
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            this.mediaRecorder = new MediaRecorder(stream);
+            this.audioChunks = [];
+            
+            this.mediaRecorder.ondataavailable = (event) => {
+                console.log('Audio data available:', event.data.size, 'bytes');
+                this.audioChunks.push(event.data);
+            };
+            
+            this.mediaRecorder.onstop = async () => {
+                console.log('Recording stopped, processing...');
+                const audioBlob = new Blob(this.audioChunks, { type: 'audio/webm' });
+                console.log('Created audio blob:', audioBlob.size, 'bytes');
+                const formData = new FormData();
+                formData.append('audio', audioBlob);
+                formData.append('sound', sound);
+                
+                document.getElementById('recordingStatus').style.display = 'none';
+                
+                try {
+                    console.log('Sending recording to server...');
+                    const response = await fetch("{{ url_for('record') }}", {
+                        method: 'POST',
+                        body: formData
+                    });
+                    
+                    console.log('Server response status:', response.status);
+                    if (response.ok) {
+                        window.location.href = response.url;
+                    } else {
+                        const errorText = await response.text();
+                        alert(`Error saving recording: ${errorText}`);
+                        console.error('Server error:', errorText);
+                    }
+                } catch (error) {
+                    console.error('Network error:', error);
+                    alert('Network error while saving recording');
+                }
+            };
+            
+            this.mediaRecorder.start();
+            console.log('MediaRecorder started');
+            document.getElementById('startRecording').style.display = 'none';
+            document.getElementById('stopRecording').style.display = 'block';
+            document.getElementById('recordingStatus').style.display = 'flex';
+        } catch (error) {
+            console.error('Error:', error);
+            alert('Error accessing microphone. Please ensure microphone permissions are granted.');
+        }
+    },
+
+    stopRecording() {
+        this.mediaRecorder.stop();
+        this.mediaRecorder.stream.getTracks().forEach(track => track.stop());
+        document.getElementById('startRecording').style.display = 'block';
+        document.getElementById('stopRecording').style.display = 'none';
+        document.getElementById('recordingStatus').style.display = 'none';
+    }
+};
+
+// Set up event listeners
+document.getElementById('startRecording').onclick = () => recordingApp.startRecording();
+document.getElementById('stopRecording').onclick = () => recordingApp.stopRecording();
+</script>
+{% endblock %} 

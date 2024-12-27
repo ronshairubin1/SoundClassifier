@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="upload-container">
+    <h2><i class="fas fa-upload"></i> Upload Sound Files</h2>
+    <p class="instructions">
+        1. Select the sound type from the list<br>
+        2. Choose one or more .wav files to upload<br>
+        3. Click Upload to process the files<br>
+        4. Verify the detected sound chunks
+    </p>
+
+    <div class="upload-form">
+        <form method="POST" action="{{ url_for('process_uploads') }}" enctype="multipart/form-data">
+            <div class="form-group mb-4">
+                <label for="sound"><i class="fas fa-music"></i> Select Sound:</label>
+                <select id="sound" name="sound" class="form-control" required>
+                    <option value="">Choose a sound...</option>
+                    {% for sound in sounds %}
+                    <option value="{{ sound }}">{{ sound }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            
+            <div class="form-group mb-4">
+                <label for="files">Select WAV Files:</label>
+                <input type="file" 
+                       id="files" 
+                       name="files" 
+                       class="form-control" 
+                       accept=".wav" 
+                       multiple 
+                       required>
+                <small class="form-text text-muted">
+                    You can select multiple .wav files at once
+                </small>
+            </div>
+
+            <button type="submit" class="btn btn-primary">
+                <i class="fas fa-upload"></i> Upload and Process
+            </button>
+        </form>
+    </div>
+</div>
+
+<style>
+.upload-container {
+    max-width: 600px;
+    margin: 2rem auto;
+    padding: 2rem;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    background-color: #fff;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.instructions {
+    background-color: #f8f9fa;
+    padding: 1rem;
+    border-radius: 4px;
+    margin-bottom: 2rem;
+    color: #666;
+}
+</style>
+{% endblock %} 

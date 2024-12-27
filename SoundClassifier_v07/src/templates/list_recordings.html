@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="recordings-container">
+    <h2><i class="fas fa-list"></i> Your Recordings</h2>
+    
+    {% for sound, files in recordings.items() %}
+    <div class="sound-group">
+        <h3>{{ sound }}</h3>
+        <div class="recordings-list">
+            {% for file in files %}
+            <div class="recording-item">
+                <audio controls src="{{ url_for('static', filename='goodsounds/' + file) }}"></audio>
+                <span class="filename">{{ file }}</span>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+<style>
+.recordings-container {
+    max-width: 800px;
+    margin: 2rem auto;
+    padding: 2rem;
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.sound-group {
+    margin-bottom: 2rem;
+}
+
+.recordings-list {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.recording-item {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 1rem;
+    background: #f8f9fa;
+    border-radius: 8px;
+}
+
+.filename {
+    font-family: monospace;
+    color: #666;
+}
+</style>
+{% endblock %} 
