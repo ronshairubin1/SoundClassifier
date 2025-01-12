@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Model Summary</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        pre { background: #f4f4f4; padding: 10px; }
+        table { border-collapse: collapse; width: 70%; }
+        td, th { border: 1px solid #ddd; padding: 8px; vertical-align: top; }
+        th { background-color: #f4f4f4; }
+    </style>
+</head>
+<body>
+    <div class="container mt-5">
+        <h1>Training Summary</h1>
+
+        <h2>Data Statistics</h2>
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Statistic</th>
+                    <th>Value</th>
+                    <th>Description</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>Input Shape</td>
+                    <td>{{ training_stats.input_shape if training_stats.input_shape else '(13, 32, 1)' }}</td>
+                    <td>The shape of the input data. This represents the number of samples and the dimensions of each sample (e.g., [samples, height, width, channels]).</td>
+                </tr>
+                <tr>
+                    <td>Input Range</td>
+                    <td>{{ training_stats.input_range if training_stats.input_range else 'MFCC Features' }}</td>
+                    <td>The minimum and maximum values in the input data. This helps in understanding the data scaling and normalization.</td>
+                </tr>
+                <tr>
+                    <td>Label Shape</td>
+                    <td>{{ training_stats.total_samples if training_stats.total_samples else '86' }} samples</td>
+                    <td>The shape of the labels array. It shows how many labels there are corresponding to the input samples.</td>
+                </tr>
+                <tr>
+                    <td>Unique Labels</td>
+                    <td>{{ training_stats.original_counts.keys()|list if training_stats.original_counts else ['eh', 'oh'] }}</td>
+                    <td>The distinct class labels present in the dataset.</td>
+                </tr>
+                <tr>
+                    <td>Label Mapping</td>
+                    <td>
+                        {% if training_stats.original_counts %}
+                            {% for class_name, count in training_stats.original_counts.items() %}
+                                {{ class_name }}: {{ count }} original, {{ training_stats.augmented_counts[class_name] }} augmented<br>
+                            {% endfor %}
+                        {% else %}
+                            No mapping available
+                        {% endif %}
+                    </td>
+                    <td>A list mapping label indices to class names.</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h2>Feature Statistics</h2>
+        {% if feature_stats %}
+        <h3>MFCC Features</h3>
+        <table class="table">
+            <tr>
+                <th>Feature Type</th>
+                <th>Mean</th>
+                <th>Std</th>
+                <th>Min</th>
+                <th>Max</th>
+            </tr>
+            <tr>
+                <td>First MFCC (Energy)</td>
+                <td>{{ '%.4f'|format(feature_stats.first_mfcc.mean) }}</td>
+                <td>{{ '%.4f'|format(feature_stats.first_mfcc.std) }}</td>
+                <td>{{ '%.4f'|format(feature_stats.first_mfcc.min) }}</td>
+                <td>{{ '%.4f'|format(feature_stats.first_mfcc.max) }}</td>
+            </tr>
+            <tr>
+                <td>Other MFCCs</td>
+                <td>{{ '%.4f'|format(feature_stats.other_mfcc.mean) }}</td>
+                <td>{{ '%.4f'|format(feature_stats.other_mfcc.std) }}</td>
+                <td>{{ '%.4f'|format(feature_stats.other_mfcc.min) }}</td>
+                <td>{{ '%.4f'|format(feature_stats.other_mfcc.max) }}</td>
+            </tr>
+        </table>
+
+        <h3>Other Features</h3>
+        <table class="table">
+            <tr>
+                <th>Feature Type</th>
+                <th>Shape</th>
+                <th>Mean</th>
+                <th>Std</th>
+                <th>Min</th>
+                <th>Max</th>
+            </tr>
+            {% for feature_name in ['delta', 'delta2', 'centroid', 'rolloff', 'rms'] %}
+            <tr>
+                <td>{{ feature_name }}</td>
+                <td>{{ feature_stats[feature_name].shape }}</td>
+                <td>{{ '%.4f'|format(feature_stats[feature_name].mean) }}</td>
+                <td>{{ '%.4f'|format(feature_stats[feature_name].std) }}</td>
+                <td>{{ '%.4f'|format(feature_stats[feature_name].min) }}</td>
+                <td>{{ '%.4f'|format(feature_stats[feature_name].max) }}</td>
+            </tr>
+            {% endfor %}
+        </table>
+
+        <h3>Normalization Effect</h3>
+        <table class="table">
+            <tr>
+                <th>Stage</th>
+                <th>Shape</th>
+                <th>Mean</th>
+                <th>Std</th>
+                <th>Min</th>
+                <th>Max</th>
+            </tr>
+            <tr>
+                <td>Pre-normalization</td>
+                <td>{{ feature_stats.pre_normalization.shape }}</td>
+                <td>{{ '%.4f'|format(feature_stats.pre_normalization.mean) }}</td>
+                <td>{{ '%.4f'|format(feature_stats.pre_normalization.std) }}</td>
+                <td>{{ '%.4f'|format(feature_stats.pre_normalization.min) }}</td>
+                <td>{{ '%.4f'|format(feature_stats.pre_normalization.max) }}</td>
+            </tr>
+            <tr>
+                <td>Post-normalization</td>
+                <td>N/A</td>
+                <td>{{ '%.4f'|format(feature_stats.post_normalization.mean) }}</td>
+                <td>{{ '%.4f'|format(feature_stats.post_normalization.std) }}</td>
+                <td>{{ '%.4f'|format(feature_stats.post_normalization.min) }}</td>
+                <td>{{ '%.4f'|format(feature_stats.post_normalization.max) }}</td>
+            </tr>
+        </table>
+        {% endif %}
+
+        {% if training_stats and training_stats.get('energy_comparison') %}
+        <h3>Energy Coefficient Comparison Between Classes</h3>
+        <table class="table">
+            <tr>
+                <th>Class</th>
+                <th>Mean</th>
+                <th>Std</th>
+                <th>Min</th>
+                <th>Max</th>
+            </tr>
+            <tr>
+                <td>'eh' sounds</td>
+                <td>{{ '%.4f'|format(training_stats.get('energy_comparison', {}).get('eh', {}).get('mean', 0)) }}</td>
+                <td>{{ '%.4f'|format(training_stats.get('energy_comparison', {}).get('eh', {}).get('std', 0)) }}</td>
+                <td>{{ '%.4f'|format(training_stats.get('energy_comparison', {}).get('eh', {}).get('min', 0)) }}</td>
+                <td>{{ '%.4f'|format(training_stats.get('energy_comparison', {}).get('eh', {}).get('max', 0)) }}</td>
+            </tr>
+            <tr>
+                <td>'oh' sounds</td>
+                <td>{{ '%.4f'|format(training_stats.get('energy_comparison', {}).get('oh', {}).get('mean', 0)) }}</td>
+                <td>{{ '%.4f'|format(training_stats.get('energy_comparison', {}).get('oh', {}).get('std', 0)) }}</td>
+                <td>{{ '%.4f'|format(training_stats.get('energy_comparison', {}).get('oh', {}).get('min', 0)) }}</td>
+                <td>{{ '%.4f'|format(training_stats.get('energy_comparison', {}).get('oh', {}).get('max', 0)) }}</td>
+            </tr>
+        </table>
+        {% endif %}
+
+        {% if training_stats %}
+        <h3>MFCC Coefficients Comparison Between Classes</h3>
+        <table class="table">
+            <tr>
+                <th>MFCC Feature</th>
+                <th>Class</th>
+                <th>Mean</th>
+                <th>Std</th>
+                <th>Min</th>
+                <th>Max</th>
+                <th>Mean Difference</th>
+            </tr>
+            {% for i in range(13) %}
+            {% set mfcc_key = 'mfcc_' ~ i ~ '_comparison' if i > 0 else 'energy_comparison' %}
+            {% if training_stats.get(mfcc_key) %}
+            <tr>
+                <td rowspan="2">MFCC_{{ i }} {% if i == 0 %}(Energy){% endif %}</td>
+                <td>'eh' sounds</td>
+                <td>{{ '%.4f'|format(training_stats[mfcc_key].eh.mean) }}</td>
+                <td>{{ '%.4f'|format(training_stats[mfcc_key].eh.std) }}</td>
+                <td>{{ '%.4f'|format(training_stats[mfcc_key].eh.min) }}</td>
+                <td>{{ '%.4f'|format(training_stats[mfcc_key].eh.max) }}</td>
+                <td rowspan="2">{{ '%.4f'|format(training_stats[mfcc_key].eh.mean - training_stats[mfcc_key].oh.mean) }}</td>
+            </tr>
+            <tr>
+                <td>'oh' sounds</td>
+                <td>{{ '%.4f'|format(training_stats[mfcc_key].oh.mean) }}</td>
+                <td>{{ '%.4f'|format(training_stats[mfcc_key].oh.std) }}</td>
+                <td>{{ '%.4f'|format(training_stats[mfcc_key].oh.min) }}</td>
+                <td>{{ '%.4f'|format(training_stats[mfcc_key].oh.max) }}</td>
+            </tr>
+            {% endif %}
+            {% endfor %}
+        </table>
+        {% endif %}
+
+        <h2>Model Architecture</h2>
+        <pre>{{ model_summary }}</pre>
+    </div>
+
+    <h2>Explanation of Model Parameters</h2>
+    <p>The model is a Convolutional Neural Network (CNN) designed for audio classification. Here's a breakdown of each parameter:</p>
+    <ul>
+        <li><strong>Input Shape:</strong> The expected shape of the input data. It ensures that the data fed into the model matches the architecture's requirements.</li>
+        <li><strong>Convolutional Layers:</strong> Extract features from the input data by applying filters to capture patterns in the audio's spectral representation.</li>
+        <li><strong>Pooling Layers:</strong> Reduce the spatial dimensions, which helps in decreasing computation and controls overfitting.</li>
+        <li><strong>Dense Layers:</strong> Perform classification based on the features extracted by the convolutional layers.</li>
+        <li><strong>Activation Functions:</strong> Introduce non-linearities to the model, allowing it to learn complex patterns.</li>
+        <li><strong>Dropout Layer:</strong> Prevents overfitting by randomly setting a fraction of input units to 0 during training.</li>
+    </ul>
+
+    <h2>Expectations from the Model</h2>
+    {% if training_stats['num_classes'] == 1 %}
+        <p>Since the model is trained only on one sound class ("{{ training_stats['label_mapping'][0] }}"), it will learn to recognize patterns associated with that sound. However, it won't be able to distinguish "{{ training_stats['label_mapping'][0] }}" from other sounds because it hasn't been trained on any other class. Essentially, the model will classify any input it receives as "{{ training_stats['label_mapping'][0] }}" because that's the only class it knows.</p>
+
+        <h2>Recommendations</h2>
+        <p>For the model to be useful in distinguishing "{{ training_stats['label_mapping'][0] }}" from other sounds, you need to introduce additional classes or a negative class representing other sounds.</p>
+        <ul>
+            <li><strong>Add More Classes:</strong> Include other sounds you wish the model to distinguish from "{{ training_stats['label_mapping'][0] }}".</li>
+            <li><strong>Binary Classification:</strong> Introduce a "not {{ training_stats['label_mapping'][0] }}" class with various other sounds, allowing the model to learn the difference between "{{ training_stats['label_mapping'][0] }}" and "not {{ training_stats['label_mapping'][0] }}".</li>
+        </ul>
+    {% else %}
+        <p>The model is trained on {{ training_stats['num_classes'] }} classes: {{ training_stats['label_mapping'] }}. It has learned to recognize patterns associated with each sound and can distinguish between them based on the training data provided.</p>
+
+        <h2>Recommendations</h2>
+        <p>To improve the model:</p>
+        <ul>
+            <li><strong>Increase Data Quality:</strong> Ensure that each class has sufficient and diverse examples.</li>
+            <li><strong>Data Augmentation:</strong> Apply techniques like noise addition, time-stretching, and pitch shifting to augment your dataset.</li>
+            <li><strong>Balance Classes:</strong> Make sure that the number of samples in each class is balanced to prevent bias.</li>
+            <li><strong>Regularization Techniques:</strong> Use techniques like dropout and weight decay to prevent overfitting.</li>
+        </ul>
+    {% endif %}
+
+    <!-- Include training performance if available -->
+    {% if training_history %}
+    <h2>Training Performance</h2>
+    <table>
+        <tr>
+            <th>Epoch</th><th>Accuracy</th><th>Validation Accuracy</th><th>Loss</th><th>Validation Loss</th>
+        </tr>
+        {% for i in range(training_history['epochs']) %}
+        <tr>
+            <td>{{ i+1 }}</td>
+            <td>{{ '%.4f'|format(training_history['accuracy'][i]) }}</td>
+            <td>{{ '%.4f'|format(training_history['val_accuracy'][i]) }}</td>
+            <td>{{ '%.4f'|format(training_history['loss'][i]) }}</td>
+            <td>{{ '%.4f'|format(training_history['val_loss'][i]) }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+    {% endif %}
+</body>
+</html> 
