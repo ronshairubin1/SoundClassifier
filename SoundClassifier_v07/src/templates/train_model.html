@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container mt-5">
+    <div class="row">
+        <div class="col-md-8 offset-md-2">
+            <div class="card">
+                <div class="card-header">
+                    <h2>Train Model</h2>
+                </div>
+                <div class="card-body">
+                    <p>Current sounds in dictionary:</p>
+                    <ul>
+                        {% for sound in sounds %}
+                        <li>{{ sound }}</li>
+                        {% endfor %}
+                    </ul>
+                    
+                    <div id="training-status" class="d-none">
+                        <div class="progress mb-3">
+                            <div class="progress-bar progress-bar-striped progress-bar-animated" 
+                                 role="progressbar" style="width: 0%"></div>
+                        </div>
+                        <p id="status-text" class="text-center">Training in progress...</p>
+                    </div>
+
+                    <form id="train-form" method="POST" action="{{ url_for('train_model') }}">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="fas fa-play"></i> Start Training
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.getElementById('train-form').addEventListener('submit', function(e) {
+    // Show progress bar
+    document.getElementById('training-status').classList.remove('d-none');
+    
+    // Disable submit button
+    this.querySelector('button[type="submit"]').disabled = true;
+});
+</script>
+{% endblock %} 

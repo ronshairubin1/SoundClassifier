@@ -75,6 +75,13 @@
                 "loo",
                 "ooah"
             ]
+        },
+        {
+            "name": "Two words",
+            "sounds": [
+                "oh",
+                "eh"
+            ]
         }
     ]
 }

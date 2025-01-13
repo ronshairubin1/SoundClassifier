@@ -89,8 +89,8 @@
                     {% for sound in active_dictionary.sounds %}
                     <tr>
                         <td>{{ sound }}</td>
-                        <td>{{ sound_stats[sound].system_total }}</td>
-                        <td>{{ sound_stats[sound].user_total }}</td>
+                        <td>{{ sound_stats.get(sound, {}).get('system_total', 0) }}</td>
+                        <td>{{ sound_stats.get(sound, {}).get('user_total', 0) }}</td>
                     </tr>
                     {% endfor %}
                 </tbody>

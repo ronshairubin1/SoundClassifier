@@ -84,6 +84,29 @@ class Config:
         with open(os.path.join(cls.CONFIG_DIR, 'dictionaries.json'), 'w') as f:
             json.dump({"dictionaries": dictionaries}, f, indent=4)
 
+    @classmethod
+    def get_active_dictionary(cls):
+        """Get the currently active dictionary"""
+        try:
+            with open(os.path.join(cls.CONFIG_DIR, 'active_dictionary.json'), 'r') as f:
+                return json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            # Return default dictionary if none exists
+            default_dict = {
+                "name": "Default",
+                "sounds": ["ah", "eh", "ee", "oh", "oo"]
+            }
+            # Save it as active
+            with open(os.path.join(cls.CONFIG_DIR, 'active_dictionary.json'), 'w') as f:
+                json.dump(default_dict, f, indent=4)
+            return default_dict
+
+    @classmethod
+    def set_active_dictionary(cls, dictionary):
+        """Set the active dictionary"""
+        with open(os.path.join(cls.CONFIG_DIR, 'active_dictionary.json'), 'w') as f:
+            json.dump(dictionary, f, indent=4)
+
 # Initialize directories
 Config.init_directories()
 
@@ -303,19 +326,43 @@ def get_sound_statistics():
 
 @app.route('/manage_dictionaries')
 def manage_dictionaries():
-    if 'username' not in session or not session.get('is_admin'):
+    if not session.get('is_admin'):
         return redirect(url_for('index'))
     
+    # Get all dictionaries
     dictionaries = Config.get_dictionaries()
-    active_dict = Config.get_dictionary()
-    sound_stats = get_sound_statistics()
-    current_time = datetime.now().strftime("%I:%M:%S %p")
+    
+    # Get active dictionary
+    active_dictionary = Config.get_active_dictionary()
+    
+    # Initialize sound statistics
+    sound_stats = {}
+    if active_dictionary and 'sounds' in active_dictionary:
+        for sound in active_dictionary['sounds']:
+            # Initialize stats for each sound
+            sound_stats[sound] = {
+                'system_total': 0,  # Count of system recordings
+                'user_total': 0     # Count of user recordings
+            }
+            
+            # Count system recordings
+            system_path = os.path.join(Config.GOOD_SOUNDS_DIR, sound)
+            if os.path.exists(system_path):
+                system_files = [f for f in os.listdir(system_path) 
+                              if f.endswith('.wav') or f.endswith('.mp3')]
+                sound_stats[sound]['system_total'] = len(system_files)
+            
+            # Count user recordings
+            user_path = os.path.join(Config.TEMP_DIR, sound)
+            if os.path.exists(user_path):
+                user_files = [f for f in os.listdir(user_path) 
+                            if f.endswith('.wav') or f.endswith('.mp3')]
+                sound_stats[sound]['user_total'] = len(user_files)
     
     return render_template('manage_dictionaries.html',
                          dictionaries=dictionaries,
-                         active_dict=active_dict,
-                         sound_stats=sound_stats,
-                         current_time=current_time)
+                         active_dictionary=active_dictionary,
+                         sound_stats=sound_stats)
 
 @app.route('/save_dictionary', methods=['POST'])
 def save_dictionary():

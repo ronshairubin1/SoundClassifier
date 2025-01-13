@@ -1,0 +1,52 @@
+  0 MIC Device, Core Audio (1 in, 0 out)
+> 1 MacBook Pro Microphone, Core Audio (1 in, 0 out)
+< 2 MacBook Pro Speakers, Core Audio (0 in, 2 out)
+  3 Microsoft Teams Audio, Core Audio (2 in, 2 out)
+ * Serving Flask app 'app' (lazy loading)
+ * Environment: production
+   WARNING: This is a development server. Do not use it in a production deployment.
+   Use a production WSGI server instead.
+ * Debug mode: on
+INFO:werkzeug: * Running on http://127.0.0.1:5000/ (Press CTRL+C to quit)
+INFO:werkzeug: * Restarting with stat
+WARNING:werkzeug: * Debugger is active!
+INFO:werkzeug: * Debugger PIN: 591-950-053
+INFO:app:Loading model...
+Metal device set to: Apple M3 Pro
+2025-01-10 10:36:55.447474: I tensorflow/core/common_runtime/pluggable_device/pluggable_device_factory.cc:305] Could not identify NUMA node of platform GPU ID 0, defaulting to 0. Your kernel may not have been built with NUMA support.
+2025-01-10 10:36:55.447778: I tensorflow/core/common_runtime/pluggable_device/pluggable_device_factory.cc:271] Created TensorFlow device (/job:localhost/replica:0/task:0/device:GPU:0 with 0 MB memory) -> physical PluggableDevice (device: 0, name: METAL, pci bus id: <undefined>)
+INFO:app:Creating detector...
+ERROR:app:Error in start_listening: name 'Queue' is not defined
+INFO:werkzeug:127.0.0.1 - - [10/Jan/2025 10:36:55] "POST /start_listening HTTP/1.1" 200 -
+INFO:werkzeug: * Detected change in '/Users/ronshairubin/Desktop/SoundsEasy/Michal-Training-Root/SoundClassifier_v07/src/ml/inference.py', reloading
+  0 MIC Device, Core Audio (1 in, 0 out)
+> 1 MacBook Pro Microphone, Core Audio (1 in, 0 out)
+< 2 MacBook Pro Speakers, Core Audio (0 in, 2 out)
+  3 Microsoft Teams Audio, Core Audio (2 in, 2 out)
+
+systemMemory: 18.00 GB
+maxCacheSize: 6.00 GB
+
+INFO:werkzeug: * Restarting with stat
+WARNING:werkzeug: * Debugger is active!
+INFO:werkzeug: * Debugger PIN: 591-950-053
+INFO:werkzeug: * Detected change in '/Users/ronshairubin/Desktop/SoundsEasy/Michal-Training-Root/SoundClassifier_v07/src/ml/inference.py', reloading
+  0 Plugable Audio, Core Audio (0 in, 2 out)
+> 1 MacBook Pro Microphone, Core Audio (1 in, 0 out)
+< 2 MacBook Pro Speakers, Core Audio (0 in, 2 out)
+  3 Microsoft Teams Audio, Core Audio (2 in, 2 out)
+INFO:werkzeug: * Restarting with stat
+WARNING:werkzeug: * Debugger is active!
+INFO:werkzeug: * Debugger PIN: 591-950-053
+INFO:werkzeug: * Detected change in '/Users/ronshairubin/Desktop/SoundsEasy/Michal-Training-Root/SoundClassifier_v07/src/ml/inference.py', reloading
+  0 Plugable Audio, Core Audio (0 in, 2 out)
+> 1 MacBook Pro Microphone, Core Audio (1 in, 0 out)
+< 2 MacBook Pro Speakers, Core Audio (0 in, 2 out)
+  3 Microsoft Teams Audio, Core Audio (2 in, 2 out)
+INFO:werkzeug: * Restarting with stat
+WARNING:werkzeug: * Debugger is active!
+INFO:werkzeug: * Debugger PIN: 591-950-053
+  0 Plugable Audio, Core Audio (0 in, 2 out)
+> 1 MacBook Pro Microphone, Core Audio (1 in, 0 out)
+< 2 MacBook Pro Speakers, Core Audio (0 in, 2 out)
+  3 Microsoft Teams Audio, Core Audio (2 in, 2 out)

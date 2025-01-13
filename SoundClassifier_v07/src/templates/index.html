@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container mt-5">
+    <div class="row">
+        <div class="col-md-8 offset-md-2 text-center">
+            <h1>Welcome to Sound Classifier</h1>
+            <div class="mt-4">
+                <a href="{{ url_for('train_model') }}" class="btn btn-primary btn-lg m-2">
+                    <i class="fas fa-play"></i> Train Model
+                </a>
+                <a href="{{ url_for('predict_page') }}" class="btn btn-success btn-lg m-2">
+                    <i class="fas fa-microphone"></i> Make Prediction
+                </a>
+            </div>
+            
+            {% with messages = get_flashed_messages() %}
+                {% if messages %}
+                    {% for message in messages %}
+                        <div class="alert alert-info mt-3">
+                            {{ message }}
+                        </div>
+                    {% endfor %}
+                {% endif %}
+            {% endwith %}
+        </div>
+    </div>
+</div>
+{% endblock %} 

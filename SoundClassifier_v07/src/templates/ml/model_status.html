@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1>Model Status</h1>
+
+{% if model_trained %}
+    <p>The model is trained and ready for use.</p>
+    <!-- Display metrics if available -->
+    {% if metrics %}
+        <!-- Render metrics here -->
+    {% endif %}
+{% else %}
+    <p>No trained model found. Please train a model.</p>
+{% endif %}
+
+<a href="{{ url_for('ml.train_model') }}">Train Model</a>
+{% endblock %} 

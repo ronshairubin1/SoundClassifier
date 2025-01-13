@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Live Inference</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        /* Optional: Add any custom styles here */
+        #predictions {
+            margin-top: 20px;
+        }
+        #predictions p {
+            font-size: 18px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Live Inference</h1>
+    <button id="start-button">Start</button>
+    <button id="stop-button" disabled>Stop</button>
+    <div id="predictions"></div>
+
+    <script>
+        let audioContext;
+        let mediaRecorder;
+        let recording = false;
+        let audioChunks = [];
+        let chunkQueue = [];
+        let mediaStream;
+
+        document.getElementById('start-button').onclick = async function() {
+            if (recording) return;
+            recording = true;
+            document.getElementById('start-button').disabled = true;
+            document.getElementById('stop-button').disabled = false;
+
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+            // Start recording with overlapping chunks
+            startOverlappingRecording(mediaStream);
+        };
+
+        function startOverlappingRecording(stream) {
+            mediaRecorder = new MediaRecorder(stream);
+
+            mediaRecorder.ondataavailable = function(event) {
+                if (event.data.size > 0) {
+                    // Add new chunk to the queue
+                    chunkQueue.push(event.data);
+
+                    // Keep only the last two chunks for overlap
+                    if (chunkQueue.length > 2) {
+                        chunkQueue.shift();
+                    }
+
+                    // Combine the last two chunks to create an overlapping segment
+                    const combinedChunks = new Blob(chunkQueue, { type: 'audio/webm' });
+                    processAudioChunk(combinedChunks);
+                }
+            };
+
+            mediaRecorder.onstop = function() {
+                console.log('MediaRecorder stopped.');
+            };
+
+            // Start recording and request data every 250 ms (adjust as needed)
+            mediaRecorder.start(250); // Chunk length in milliseconds
+        }
+
+        function processAudioChunk(audioBlob) {
+            const formData = new FormData();
+            formData.append('audio', audioBlob);
+
+            fetch('/ml/predict_sound', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    console.error('Server error:', data.error);
+                    const predictionsDiv = document.getElementById('predictions');
+                    predictionsDiv.innerHTML = 'Server error: ' + data.error;
+                } else if (data.predictions) {
+                    displayPredictions(data.predictions);
+                } else {
+                    console.error('Unexpected server response:', data);
+                }
+            })
+            .catch(error => {
+                console.error('Error during prediction:', error);
+            });
+        }
+
+        document.getElementById('stop-button').onclick = function() {
+            if (!recording) return;
+            recording = false;
+            document.getElementById('start-button').disabled = false;
+            document.getElementById('stop-button').disabled = true;
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                mediaRecorder.stop();
+            }
+            if (audioContext) {
+                audioContext.close();
+            }
+        };
+
+        function displayPredictions(predictions) {
+            const predictionsDiv = document.getElementById('predictions');
+            predictionsDiv.innerHTML = ''; // Clear previous predictions
+
+            if (!Array.isArray(predictions)) {
+                console.error('Predictions is not an array:', predictions);
+                return;
+            }
+
+            predictions.forEach(prediction => {
+                let sound;
+                let probability;
+                if (typeof prediction === 'object' && prediction !== null) {
+                    sound = prediction.sound;
+                    probability = prediction.probability;
+                }
+
+                if (sound !== undefined && probability !== undefined) {
+                    const p = document.createElement('p');
+                    p.innerText = `Sound: ${sound}, Probability: ${(probability * 100).toFixed(2)}%`;
+                    predictionsDiv.appendChild(p);
+                } else {
+                    console.error('Invalid prediction format:', prediction);
+                }
+            });
+        }
+    </script>
+</body>
+</html> 

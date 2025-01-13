@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="card">
+    <h2>Predict Sound</h2>
+    <form method="POST" enctype="multipart/form-data">
+        <div class="mb-3">
+            <label>Input Type:</label>
+            <select name="input_type" class="form-control">
+                <option value="file">File Upload</option>
+                <option value="microphone">Microphone</option>
+            </select>
+        </div>
+        <div id="fileUpload" class="mb-3">
+            <label>Audio File:</label>
+            <input type="file" name="audio_data" class="form-control">
+        </div>
+        <button type="submit" class="btn btn-primary">
+            <i class="fas fa-magic"></i> Predict
+        </button>
+    </form>
+</div>
+{% endblock %} 

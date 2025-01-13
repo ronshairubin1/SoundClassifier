@@ -1,26 +1,7 @@
 {
-    "name": "Michal Plus Ooah",
+    "name": "Two words",
     "sounds": [
-        "ah",
-        "eh",
-        "ee",
         "oh",
-        "oo",
-        "bah",
-        "beh",
-        "bee",
-        "boh",
-        "boo",
-        "mah",
-        "meh",
-        "mee",
-        "moh",
-        "moo",
-        "lah",
-        "leh",
-        "lee",
-        "loh",
-        "loo",
-        "ooah"
+        "eh"
     ]
 }

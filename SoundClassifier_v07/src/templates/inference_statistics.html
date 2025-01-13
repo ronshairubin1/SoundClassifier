@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container">
+    <div class="card">
+        <h2 class="text-center mb-4">
+            <i class="fas fa-chart-bar"></i> Inference Statistics
+        </h2>
+        
+        <div class="row">
+            <div class="col-md-6">
+                <div class="card mb-3">
+                    <div class="card-body">
+                        <h3 class="card-title">
+                            <i class="fas fa-tachometer-alt"></i> Overview
+                        </h3>
+                        <p>Total Predictions: {{ inference_stats.total_predictions }}</p>
+                        <p>Average Confidence: {{ "%.1f"|format(avg_confidence * 100) }}%</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-md-6">
+                <div class="card mb-3">
+                    <div class="card-body">
+                        <h3 class="card-title">
+                            <i class="fas fa-list"></i> Class Distribution
+                        </h3>
+                        {% for class_name, count in inference_stats.class_counts.items() %}
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <span>{{ class_name }}</span>
+                            <span class="badge bg-primary">{{ count }}</span>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %} 
