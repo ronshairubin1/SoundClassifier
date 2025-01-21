@@ -13,6 +13,7 @@ from sklearn.preprocessing import StandardScaler
 import joblib
 import tempfile
 from tqdm import tqdm
+from .sound_preprocessor import SoundPreprocessor
 
 def preprocess_audio(filepath, temp_dir):
     """Preprocess audio to match inference preprocessing."""
@@ -39,9 +40,10 @@ class SoundTrainer:
             model_dir (str): Directory to save/load model files
         """
         self.good_sounds_dir = good_sounds_dir
-        self.feature_extractor = AudioFeatureExtractor()
+        self.model_dir = model_dir
         self.classifier = SoundClassifier(model_dir=model_dir)  # Create new instance
         self.scaler = StandardScaler()
+        self.preprocessor = SoundPreprocessor(sample_rate=16000)  # Use same sample rate as inference
         
     def augment_audio(self, y, sr):
         """Apply enhanced audio augmentation techniques."""
@@ -50,12 +52,6 @@ class SoundTrainer:
         # Existing pitch shift augmentations
         augmented.append(librosa.effects.pitch_shift(y, sr=sr, n_steps=1))
         augmented.append(librosa.effects.pitch_shift(y, sr=sr, n_steps=-1))
-        
-        # Comment out time stretching augmentations
-        # augmented.append(self.time_stretch_audio(y, sr, rate=0.9))
-        # augmented.append(self.time_stretch_audio(y, sr, rate=1.1))
-        
-        # Additional augmentations
         
         # Add random noise
         noise_factor = 0.005
@@ -79,13 +75,6 @@ class SoundTrainer:
             return np.roll(y, shift)
 
         augmented.append(shift_time(y))
-        
-        # Comment out change speed augmentations
-        # def change_speed(y, sr, speed_change=1.0):
-        #     return librosa.resample(y, sr, int(sr * speed_change))
-
-        # augmented.append(change_speed(y, sr, speed_change=0.8))
-        # augmented.append(change_speed(y, sr, speed_change=1.2))
         
         # Equalization (simulate different recording devices)
         def equalize(y):
@@ -127,70 +116,51 @@ class SoundTrainer:
     
     def collect_training_data(self):
         """Collect and process training data from verified sounds."""
-        import tempfile
-        import shutil
+        features_list = []
+        labels = []
+        
+        # Process each file in the good sounds directory
+        for filename in os.listdir(self.good_sounds_dir):
+            if not filename.endswith('.wav'):
+                continue
+            # Skip temporary files
+            if filename.startswith('temp_') or filename.endswith('_preprocessed.wav'):
+                continue
 
-        # Create a temporary directory
-        temp_dir = tempfile.mkdtemp()
-
-        try:
-            features_list = []
-            labels = []
+            sound_type = filename.split('_')[0]
+            filepath = os.path.join(self.good_sounds_dir, filename)
             
-            # Process each file in the good sounds directory
-            for filename in os.listdir(self.good_sounds_dir):
-                if not filename.endswith('.wav'):
-                    continue
-                # Skip temporary files
-                if filename.startswith('temp_') or filename.endswith('_preprocessed.wav'):
-                    continue
-
-                sound_type = filename.split('_')[0]
-                filepath = os.path.join(self.good_sounds_dir, filename)
-                # Preprocess the audio to match inference
-                preprocessed_path = preprocess_audio(filepath, temp_dir)
-
-                # Load audio for augmentation
-                y, sr = librosa.load(preprocessed_path, sr=22050)
-
-                # Get features for original audio
-                features = self.feature_extractor.extract_features(preprocessed_path)
-
+            try:
+                # Load audio
+                y, sr = librosa.load(filepath, sr=16000)  # Use same sample rate as inference
+                
+                # Get features using shared preprocessor
+                features = self.preprocessor.preprocess_array(y)
+                
                 if features is not None:
-                    # Use _format_features method for consistency
-                    feature_values = self._format_features(features)
-                    features_list.append(feature_values)
+                    features_list.append(features)
                     labels.append(sound_type)
 
                     # Add augmented versions
                     augmented_audio = self.augment_audio(y, sr)
                     for aug_y in augmented_audio:
-                        # Save temporarily and extract features
-                        temp_path = os.path.join(temp_dir, 'temp_aug.wav')
-                        try:
-                            sf.write(temp_path, aug_y, sr)
-                            aug_features = self.feature_extractor.extract_features(temp_path)
-                        except Exception as e:
-                            logging.error(f"Error writing or extracting features from {temp_path}: {e}")
-                            aug_features = None
-                        finally:
-                            if os.path.exists(temp_path):
-                                os.remove(temp_path)
-
+                        aug_features = self.preprocessor.preprocess_array(aug_y)
                         if aug_features is not None:
-                            aug_values = self._format_features(aug_features)
-                            features_list.append(aug_values)
+                            features_list.append(aug_features)
                             labels.append(sound_type)
+            except Exception as e:
+                logging.error(f"Error processing file {filepath}: {e}")
+                continue
 
-            if not features_list:
-                logging.error("No valid training data found")
-                return None, None
+        if not features_list:
+            logging.error("No valid training data found")
+            return None, None
 
-            return np.array(features_list), np.array(labels)
+        # Stack features and convert labels
+        features_array = np.stack(features_list)
+        labels_array = np.array(labels)
 
-        finally:
-            # Clean up the temporary directory
-            shutil.rmtree(temp_dir)
+        return features_array, labels_array
     
     def train_model(self, progress_callback=None):
         """Train the model on verified sounds."""

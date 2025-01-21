@@ -212,3 +212,13 @@ class SoundClassifier:
         # Convert back to time domain
         y_stretched = librosa.istft(stretched_stft)
         return y_stretched 
+
+    def build_model(self, input_shape, num_classes):
+        # Ensure input shape has channel dimension
+        if len(input_shape) == 2:
+            input_shape = (*input_shape, 1)
+        
+        model = models.Sequential([
+            layers.Conv2D(32, (3, 3), activation='relu', input_shape=input_shape),
+            # ... rest of model architecture
+        ]) 

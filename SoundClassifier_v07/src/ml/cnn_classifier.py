@@ -9,17 +9,18 @@ from config import Config
 import logging
 import json
 from io import StringIO
-from scipy.signal import find_peaks
+from .audio_processing import SoundProcessor
+from .constants import SAMPLE_RATE, N_MFCC, AUDIO_DURATION, AUDIO_LENGTH, BATCH_SIZE, EPOCHS
 
 # -----------------------------
 # 1. Global settings
 # -----------------------------
 SAMPLE_RATE = 16000
 N_MFCC = 13
-TARGET_DURATION = 0.5  # Target duration in seconds
-AUDIO_LENGTH = int(SAMPLE_RATE * TARGET_DURATION)
-BATCH_SIZE = 32
-EPOCHS = 50
+AUDIO_DURATION = 1.0  # Use fixed duration of 1 second
+AUDIO_LENGTH = int(SAMPLE_RATE * AUDIO_DURATION)
+BATCH_SIZE = 32  # Increased batch size
+EPOCHS = 50      # Increased epochs
 
 # -----------------------------
 # 2. Data augmentation helpers
@@ -44,103 +45,35 @@ def change_pitch(audio, sr=SAMPLE_RATE, pitch_range=2.0):
 def change_speed(audio, speed_range=0.1):
     """Time stretch by small random amount."""
     speed_factor = np.random.uniform(1 - speed_range, 1 + speed_range)
-    return librosa.effects.time_stretch(audio, speed_factor)
+    return librosa.effects.time_stretch(y=audio, rate=speed_factor)
+
+def add_colored_noise(audio, noise_type='white', noise_factor=0.005):
+    """Add different types of noise to an audio signal.
+    
+    Args:
+        noise_type: 'white', 'pink', or 'brown'
+        noise_factor: scaling factor for noise
+    """
+    if noise_type == 'white':
+        noise = np.random.randn(len(audio))
+    elif noise_type == 'pink':
+        # Generate pink noise using 1/f spectrum
+        f = np.fft.fftfreq(len(audio))
+        f = np.abs(f)
+        f[0] = 1e-6  # Avoid divide by zero
+        pink = np.random.randn(len(audio)) / np.sqrt(f)
+        noise = np.fft.ifft(pink).real
+    elif noise_type == 'brown':
+        # Generate brownian noise by cumulative sum of white noise
+        noise = np.cumsum(np.random.randn(len(audio)))
+        noise = noise / np.max(np.abs(noise))  # Normalize
+        
+    return audio + noise_factor * noise
 
 # -----------------------------
-# 3. Audio processing functions
+# 3. Feature extraction
 # -----------------------------
-def center_audio(audio):
-    """Center the audio around the phoneme by trimming silence."""
-    # Energy thresholding to find active speech
-    energy = librosa.feature.rms(y=audio)[0]
-    frames = np.nonzero(energy > np.max(energy) * 0.1)[0]
-    
-    if frames.size:
-        # Compute start and end positions
-        start_frame = frames[0]
-        end_frame = frames[-1]
-        start_sample = max(0, start_frame * 512)
-        end_sample = min(len(audio), end_frame * 512)
-        audio = audio[start_sample:end_sample]
-    else:
-        # If no frames detected, return the original audio
-        pass
-    
-    return audio
-
-def stretch_audio(audio, target_duration, sr=SAMPLE_RATE):
-    """Stretch or compress audio to a fixed duration."""
-    # Calculate the current duration
-    current_duration = librosa.get_duration(y=audio, sr=sr)
-    # Calculate the stretch factor
-    if current_duration == 0:
-        stretch_factor = 1.0  # Avoid division by zero
-    else:
-        stretch_factor = target_duration / current_duration
-    # Apply time stretching
-    audio_stretched = librosa.effects.time_stretch(audio, rate=stretch_factor)
-    return audio_stretched
-
-def process_audio_to_features(audio):
-    """Process audio into features with consistent dimensions."""
-    feature_stats = {}
-    
-    # Include 30 ms of additional context before and after the audio
-    context_duration = 0.03  # 30 ms in seconds
-    context_samples = int(context_duration * SAMPLE_RATE)
-    
-    # Pad the audio with context (silence)
-    audio = np.pad(audio, (context_samples, context_samples), 'constant')
-    
-    # Center the audio around the phoneme (after adding context)
-    audio = center_audio(audio)
-    
-    # Stretch or compress audio to fixed duration
-    audio = stretch_audio(audio, target_duration=TARGET_DURATION, sr=SAMPLE_RATE)
-    
-    # Normalize audio amplitude
-    audio = audio / (np.max(np.abs(audio)) + 1e-10)
-    
-    # Ensure the audio length is exactly AUDIO_LENGTH samples
-    if len(audio) > AUDIO_LENGTH:
-        audio = audio[:AUDIO_LENGTH]
-    elif len(audio) < AUDIO_LENGTH:
-        audio = np.pad(audio, (0, AUDIO_LENGTH - len(audio)), 'constant')
-    
-    # Compute mel-spectrogram
-    mel_spec = librosa.feature.melspectrogram(
-        y=audio,
-        sr=SAMPLE_RATE,
-        n_mels=128,
-        n_fft=1024,
-        hop_length=256)
-    
-    mel_spec_db = librosa.power_to_db(mel_spec, ref=np.max)
-    
-    # Compute MFCCs
-    mfcc = librosa.feature.mfcc(
-        S=mel_spec_db,
-        sr=SAMPLE_RATE,
-        n_mfcc=N_MFCC)
-    
-    # Stack features
-    features = np.vstack([mel_spec_db, mfcc])
-    
-    # Ensure consistent time frames by padding or truncating
-    target_frames = 32  # Define a fixed number of time frames
-    if features.shape[1] > target_frames:
-        features = features[:, :target_frames]
-    elif features.shape[1] < target_frames:
-        pad_width = target_frames - features.shape[1]
-        features = np.pad(features, ((0, 0), (0, pad_width)), mode='constant')
-    
-    # Standardize features
-    features = (features - np.mean(features)) / (np.std(features) + 1e-6)
-    
-    # Add channel dimension for CNN
-    features = features[..., np.newaxis]
-    
-    return features, feature_stats
+# Removed duplicate center_audio function since we use SoundProcessor
 
 # -----------------------------
 # 4. Building the dataset
@@ -151,22 +84,34 @@ def build_dataset(sound_folder):
     y = []
     total_samples = 0
     
+    # Initialize sound processor
+    sound_processor = SoundProcessor(sample_rate=SAMPLE_RATE)
+    
     # Get active dictionary
     config_file = os.path.join(Config.CONFIG_DIR, 'active_dictionary.json')
+    logging.info(f"Looking for config file at: {config_file}")
     with open(config_file, 'r') as f:
         active_dict = json.load(f)
     class_names = active_dict['sounds']
+    logging.info(f"Found class names: {class_names}")
     
     # Map class indices
     class_indices = {class_name: idx for idx, class_name in enumerate(class_names)}
+    logging.info(f"Class indices mapping: {class_indices}")
     
-    # Determine the expected feature shape
-    test_audio = np.zeros(AUDIO_LENGTH)
-    test_features, _ = process_audio_to_features(test_audio)
-    expected_shape = test_features.shape
-
+    # Define augmentation parameters
+    # More subtle pitch shifts around center
+    pitch_shifts_center = np.linspace(-1.0, 1.0, 9)  # 9 subtle shifts
+    pitch_shifts_outer = np.array([-3.0, -2.0, 2.0, 3.0])  # 4 larger shifts
+    pitch_shifts = np.concatenate([pitch_shifts_outer, pitch_shifts_center])
+    
+    # Different noise types and levels
+    noise_types = ['white', 'pink', 'brown']
+    noise_levels = np.linspace(0.001, 0.01, 5)  # 5 levels per type
+    
     for class_name in class_names:
         class_path = os.path.join(sound_folder, class_name)
+        logging.info(f"Processing class directory: {class_path}")
         if not os.path.exists(class_path):
             logging.warning(f"Directory {class_path} does not exist.")
             continue
@@ -177,53 +122,34 @@ def build_dataset(sound_folder):
         for file_name in files:
             file_path = os.path.join(class_path, file_name)
             try:
+                logging.info(f"Loading file: {file_path}")
                 audio, _ = librosa.load(file_path, sr=SAMPLE_RATE)
                 
-                # Original audio
-                features, _ = process_audio_to_features(audio)
-
-                if features.shape != expected_shape:
-                    logging.warning(f"Skipping {file_path} due to shape mismatch. Expected {expected_shape}, got {features.shape}")
-                    continue
-
+                # Process original audio
+                features = sound_processor.process_audio(audio)
                 X.append(features)
                 y.append(class_indices[class_name])
                 total_samples += 1
                 
-                # Data augmentations
-                augmentations = []
-
-                # 1. Add noise
-                if random.random() < 0.5:
-                    audio_aug = add_noise(audio)
-                    augmentations.append(audio_aug)
-
-                # 2. Time shift
-                if random.random() < 0.5:
-                    audio_aug = time_shift(audio)
-                    augmentations.append(audio_aug)
-
-                # 3. Change pitch
-                if random.random() < 0.3:
-                    audio_aug = change_pitch(audio)
-                    augmentations.append(audio_aug)
-
-                # 4. Change speed
-                if random.random() < 0.3:
-                    audio_aug = change_speed(audio)
-                    augmentations.append(audio_aug)
-
-                for aug_audio in augmentations:
-                    features_aug, _ = process_audio_to_features(aug_audio)
-
-                    if features_aug.shape != expected_shape:
-                        logging.warning(f"Skipping augmented audio due to shape mismatch. Expected {expected_shape}, got {features_aug.shape}")
-                        continue
-
-                    X.append(features_aug)
+                # Extensive augmentation with combinations
+                for pitch_shift in pitch_shifts:
+                    # Pitch-shifted version
+                    audio_pitch = librosa.effects.pitch_shift(audio, sr=SAMPLE_RATE, n_steps=pitch_shift)
+                    features = sound_processor.process_audio(audio_pitch)
+                    X.append(features)
                     y.append(class_indices[class_name])
                     total_samples += 1
-
+                    
+                    # Add different noise types
+                    for noise_type in noise_types:
+                        for noise_factor in noise_levels:
+                            # Pitch-shift + noise combination
+                            audio_combined = add_colored_noise(audio_pitch, noise_type, noise_factor)
+                            features = sound_processor.process_audio(audio_combined)
+                            X.append(features)
+                            y.append(class_indices[class_name])
+                            total_samples += 1
+                
             except Exception as e:
                 logging.error(f"Error processing {file_path}: {e}")
                 continue
@@ -236,50 +162,49 @@ def build_dataset(sound_folder):
     y = np.array(y)
     
     logging.info(f"Total samples after augmentation: {total_samples}")
-    logging.info(f"Final dataset shape: X={X.shape}, y={y.shape}")
-    return X, y, class_names, None  # Keeping the return structure the same
+    logging.info(f"Dataset shapes: X={X.shape}, y={y.shape}")
+    stats = {
+        'original_counts': {},
+        'augmented_counts': {}
+    }
+    return X, y, class_names, stats
 
 # -----------------------------
 # 5. Define a small CNN model
 # -----------------------------
 def build_model(input_shape, num_classes):
     """Build a CNN model optimized for phoneme classification."""
-    model = models.Sequential([
-        # First Conv Block
-        layers.Conv2D(16, (3, 3), padding='same', input_shape=input_shape,
-                      kernel_regularizer=tf.keras.regularizers.l2(1e-4)),
-        layers.BatchNormalization(),
-        layers.Activation('relu'),
-        layers.MaxPooling2D((2, 2)),
-        layers.Dropout(0.3),
-        
-        # Second Conv Block
-        layers.Conv2D(32, (3, 3), padding='same',
-                      kernel_regularizer=tf.keras.regularizers.l2(1e-4)),
-        layers.BatchNormalization(),
-        layers.Activation('relu'),
-        layers.MaxPooling2D((2, 2)),
-        layers.Dropout(0.3),
-        
-        # Third Conv Block
-        layers.Conv2D(64, (3, 3), padding='same',
-                      kernel_regularizer=tf.keras.regularizers.l2(1e-4)),
-        layers.BatchNormalization(),
-        layers.Activation('relu'),
-        layers.MaxPooling2D((2, 2)),
-        layers.Dropout(0.4),
-        
-        # Dense layers
-        layers.Flatten(),
-        layers.Dense(64, activation='relu',
-                     kernel_regularizer=tf.keras.regularizers.l2(1e-4)),
-        layers.BatchNormalization(),
-        layers.Dropout(0.5),
-        layers.Dense(num_classes, activation='softmax')
-    ])
+    inputs = layers.Input(shape=input_shape)
+    
+    # First Conv Block
+    x = layers.Conv2D(16, (3, 3), padding='same',
+                    kernel_regularizer=tf.keras.regularizers.l2(1e-5))(inputs)
+    x = layers.BatchNormalization()(x)
+    x = layers.Activation('relu')(x)
+    x = layers.MaxPooling2D((2, 2))(x)
+    x = layers.Dropout(0.2)(x)
+    
+    # Second Conv Block
+    x = layers.Conv2D(32, (3, 3), padding='same',
+                    kernel_regularizer=tf.keras.regularizers.l2(1e-5))(x)
+    x = layers.BatchNormalization()(x)
+    x = layers.Activation('relu')(x)
+    x = layers.MaxPooling2D((2, 2))(x)
+    x = layers.Dropout(0.2)(x)
+    
+    # Dense layers
+    x = layers.Flatten()(x)
+    x = layers.Dense(256, activation='relu',
+                   kernel_regularizer=tf.keras.regularizers.l2(1e-5))(x)
+    x = layers.BatchNormalization()(x)
+    x = layers.Dropout(0.3)(x)
+    
+    outputs = layers.Dense(num_classes, activation='softmax')(x)
+    
+    model = models.Model(inputs=inputs, outputs=outputs)
     
     # Use Adam optimizer with a lower learning rate
-    optimizer = tf.keras.optimizers.Adam(learning_rate=0.0005)
+    optimizer = tf.keras.optimizers.Adam(learning_rate=0.0005)  # Reduced learning rate
     
     model.compile(
         optimizer=optimizer,
@@ -287,12 +212,12 @@ def build_model(input_shape, num_classes):
         metrics=['accuracy']
     )
     
-    # Capture the model summary in a string (existing functionality)
+    # Capture the model summary
     model_summary_io = StringIO()
     model.summary(print_fn=lambda x: model_summary_io.write(x + '\n'))
-    model_summary_str = model_summary_io.getvalue()
+    model_summary = model_summary_io.getvalue()
     
-    return model, model_summary_str
+    return model, model_summary
 
 # -----------------------------
 # 6. Main training logic

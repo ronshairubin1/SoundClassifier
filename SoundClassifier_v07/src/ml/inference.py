@@ -4,7 +4,8 @@ import sounddevice as sd
 import tensorflow as tf
 import threading
 import time
-from .cnn_classifier import N_MFCC, AUDIO_LENGTH, SAMPLE_RATE
+from .constants import SAMPLE_RATE, AUDIO_DURATION, AUDIO_LENGTH
+from .audio_processing import SoundProcessor
 import logging
 
 # Set up logging
@@ -12,8 +13,6 @@ logging.basicConfig(level=logging.INFO)
 
 print(sd.query_devices())
 
-SAMPLE_RATE = 16000
-N_MFCC = 13
 AUDIO_DURATION = 1.0  # seconds for each sample
 AUDIO_LENGTH = int(SAMPLE_RATE * AUDIO_DURATION)
 
@@ -27,24 +26,21 @@ class SoundDetector:
         self.callback = None
         self.stream = None
         self.thread = None
-        self.baseline_rms = None  # Baseline noise level
-        self.last_prediction_time = None  # For debouncing
         self.buffer = bytearray()
         self.sample_width = 2  # 16-bit audio
-        self.frame_duration_ms = 50   # Frame duration in milliseconds
+        self.frame_duration_ms = 30   # Reduced for finer granularity
         self.frame_size = int(SAMPLE_RATE * self.frame_duration_ms / 1000)
+        self.frame_duration = self.frame_duration_ms / 1000.0  # Convert to seconds
         self.speech_buffer = bytearray()
         self.speech_detected = False
         self.silence_duration = 0
-        self.silence_threshold_ms = 200  # Shorter duration for short words
+        self.silence_threshold_ms = 300  # For better word detection
         self.auto_stop = False
-
-        # Reduce minimum duration for short words
-        self.min_speech_duration_ms = 150  # Adjusted for shorter sounds
+        self.is_speech_active = False
         self.speech_duration = 0
-
-        # Record background noise
-        self.measure_background_noise()
+        
+        # Initialize sound processor
+        self.sound_processor = SoundProcessor(sample_rate=SAMPLE_RATE)
         
         self.audio_queue_lock = threading.Lock()
         
@@ -56,182 +52,123 @@ class SoundDetector:
         for i, device in enumerate(devices):
             logging.info(f"[{i}] {device['name']} (inputs: {device['max_input_channels']})")
 
-        # Lower confidence threshold
-        self.confidence_threshold = 0.60  # Lower threshold for more predictions
-
-        # Add amplitude threshold
-        self.amplitude_threshold = 0.01  # Minimum amplitude to consider sound
-        
-        # Add minimum prediction threshold
-        self.min_prediction_threshold = 0.4  # Minimum probability to make any prediction
+        # Thresholds matching training settings
+        self.confidence_threshold = 0.40
+        self.amplitude_threshold = 0.1  # Match peak height threshold from training
+        self.min_prediction_threshold = 0.3
 
         # Add circular buffer for pre-recording
-        self.pre_buffer_duration_ms = 50  # 50ms pre-recording
+        self.pre_buffer_duration_ms = 100
         self.pre_buffer_size = int(SAMPLE_RATE * self.pre_buffer_duration_ms / 1000)
         self.circular_buffer = np.zeros(self.pre_buffer_size, dtype=np.float32)
         self.buffer_index = 0
 
-    def audio_callback(self, indata, frames, time_info, status):
-        """Callback for sounddevice to capture audio and use amplitude thresholding."""
+    def process_audio(self):
         try:
-            if status:
-                logging.warning(f"Audio stream status: {status}")
+            if not self.audio_queue:
+                logging.info("No audio data in queue to process")
                 return
 
-            # Convert float32 audio data to float64 for processing
-            audio_data = indata.astype(np.float64)
+            logging.info(f"Processing audio queue of size: {len(self.audio_queue)}")
             
-            # Update circular buffer
-            samples_to_write = min(len(audio_data), self.pre_buffer_size)
-            start_idx = self.buffer_index
-            end_idx = (start_idx + samples_to_write) % self.pre_buffer_size
-            
-            if end_idx > start_idx:
-                self.circular_buffer[start_idx:end_idx] = audio_data[:samples_to_write].flatten()
-            else:
-                # Handle wrap-around
-                first_part = self.pre_buffer_size - start_idx
-                self.circular_buffer[start_idx:] = audio_data[:first_part].flatten()
-                self.circular_buffer[:end_idx] = audio_data[first_part:samples_to_write].flatten()
-            
-            self.buffer_index = end_idx
+            # Concatenate all audio segments
+            audio_data = np.concatenate(self.audio_queue)
+            logging.info(f"Concatenated audio shape: {audio_data.shape}")
 
-            # Calculate RMS amplitude
-            rms = np.sqrt(np.mean(audio_data**2))
+            try:
+                # Process audio using shared sound processor
+                features = self.sound_processor.process_audio(audio_data)
+                if features is None:
+                    return
+                    
+                logging.info(f"Extracted features shape: {features.shape}")
 
-            # Use absolute threshold instead of relative to baseline
-            threshold = self.amplitude_threshold
+                # Add batch dimension
+                features = np.expand_dims(features, axis=0)
+                predictions = self.model.predict(features, verbose=0)
+                logging.info(f"Raw predictions shape: {predictions.shape}, values: {predictions[0]}")
 
-            logging.debug(f"Current RMS: {rms:.5f}, Threshold: {threshold:.5f}")
-
-            if rms > threshold:
-                # Additional check for speech-like characteristics
-                # Calculate zero-crossing rate
-                zero_crossings = np.sum(np.abs(np.diff(np.signbit(audio_data))))
-                zero_crossing_rate = zero_crossings / len(audio_data)
+                # Get the predicted class
+                predicted_class = np.argmax(predictions[0])
+                confidence = predictions[0][predicted_class]
                 
-                # Only process if it looks like speech
-                if 0.01 < zero_crossing_rate < 0.2:  # Typical range for speech
-                    logging.debug(f"Speech detected - RMS: {rms:.5f}, ZCR: {zero_crossing_rate:.3f}")
-                    # When sound detected, get pre-buffer data
-                    pre_audio = np.roll(self.circular_buffer, -self.buffer_index)
-                    full_audio = np.concatenate([pre_audio, audio_data.flatten()])
-                    self.speech_buffer.extend(full_audio.astype(np.float32).tobytes())
-                    self.speech_detected = True
+                if confidence > self.confidence_threshold:
+                    predicted_label = self.class_names[predicted_class]
+                    logging.info(f"Prediction: {predicted_label} with confidence: {confidence:.4f}")
+                    self.predictions.append((predicted_label, confidence))
                 else:
-                    logging.debug(f"Non-speech sound detected - ZCR: {zero_crossing_rate:.3f}")
-            else:
-                logging.debug("Silence detected")
-                if self.speech_detected:
-                    self.silence_duration += self.frame_duration_ms
-                    if self.silence_duration > self.silence_threshold_ms:
-                        # Only process if we have enough speech
-                        if self.speech_duration >= self.min_speech_duration_ms:
-                            logging.info(f"Processing sound segment of {self.speech_duration}ms")
-                            with self.audio_queue_lock:
-                                self.audio_queue.append(bytes(self.speech_buffer))
-                        else:
-                            logging.info(f"Sound segment too short ({self.speech_duration}ms < {self.min_speech_duration_ms}ms)")
-                        # Reset speech detection
-                        self.speech_buffer.clear()
-                        self.speech_detected = False
-                        self.silence_duration = 0
-                        self.speech_duration = 0
-                # Optional: Limit the size of the speech buffer to prevent excessive memory usage
-                max_buffer_size = SAMPLE_RATE * 5  # 5 seconds max
-                if len(self.speech_buffer) > max_buffer_size:
-                    logging.warning("Speech buffer exceeded maximum size, resetting.")
-                    self.speech_buffer.clear()
-                    self.speech_detected = False
-                    self.silence_duration = 0
-                    self.speech_duration = 0
+                    logging.info(f"Prediction confidence {confidence:.4f} below threshold {self.confidence_threshold}")
 
-            # Add spectral centroid to distinguish between 'eh' and 'oh'
-            if self.speech_detected:
-                spec_cent = librosa.feature.spectral_centroid(y=audio_data.flatten(), sr=SAMPLE_RATE)
-                logging.debug(f"Spectral centroid: {np.mean(spec_cent)}")
+            except Exception as e:
+                logging.error(f"Error in feature extraction/prediction: {str(e)}")
+                logging.error(f"Audio data stats - min: {np.min(audio_data)}, max: {np.max(audio_data)}, mean: {np.mean(audio_data)}")
+                return
 
         except Exception as e:
-            logging.error(f"Error in audio callback: {e}")
-            logging.error(f"Input data shape: {indata.shape}")
-            logging.error(f"Input data type: {indata.dtype}")
-            return
+            logging.error(f"Error processing audio: {str(e)}")
 
-    def measure_background_noise(self, duration=1.0):
-        """Measure the baseline noise level over a specified duration."""
-        logging.info("Measuring background noise...")
-        recording = sd.rec(int(duration * SAMPLE_RATE), samplerate=SAMPLE_RATE,
-                           channels=1, blocking=True)
-        sd.wait()
-        recording = recording.flatten()
-        self.baseline_rms = np.sqrt(np.mean(recording**2))
-        logging.info(f"Baseline RMS amplitude: {self.baseline_rms:.5f}")
-
-    def process_audio(self):
-        """Process buffered audio segments and make predictions."""
-        while self.is_recording:
-            if len(self.audio_queue) > 0:
-                with self.audio_queue_lock:
-                    audio_data = self.audio_queue.pop(0)
-                try:
-                    # Process the audio data
-                    duration_ms = len(audio_data) / SAMPLE_RATE * 1000
-                    if duration_ms < self.min_speech_duration_ms:
-                        logging.info(f"Sound segment too short ({duration_ms:.0f}ms < {self.min_speech_duration_ms}ms)")
-                        continue
-
-                    # Convert bytes to numpy array
-                    audio_array = np.frombuffer(audio_data, dtype=np.float32)
-                    logging.info(f"Audio array shape: {audio_array.shape}")
-                    
-                    # Normalize if needed
-                    if np.max(np.abs(audio_array)) > 1.0:
-                        audio_array = audio_array / 32768.0  # Normalize 16-bit audio
-                    
-                    # Check if the sound is loud enough to be speech
-                    rms = np.sqrt(np.mean(audio_array**2))
-                    if rms < self.amplitude_threshold:
-                        logging.info(f"Sound too quiet (RMS: {rms:.5f} < {self.amplitude_threshold})")
-                        continue
-                    
-                    features = preprocess_audio(audio_array)
-                    predictions = self.model.predict(features, verbose=0)
-                    
-                    # Get probabilities for both classes
-                    eh_prob = float(predictions[0][self.class_names.index('eh')])
-                    oh_prob = float(predictions[0][self.class_names.index('oh')])
-                    
-                    # Check if either prediction is strong enough
-                    if max(eh_prob, oh_prob) < self.min_prediction_threshold:
-                        logging.info(f"No clear prediction (eh: {eh_prob:.2%}, oh: {oh_prob:.2%})")
-                        continue
-                    
-                    # Only make prediction if one class is significantly more likely
-                    prediction_diff = abs(eh_prob - oh_prob)
-                    if prediction_diff < 0.2:  # Require 20% difference between predictions
-                        logging.info(f"Predictions too close (diff: {prediction_diff:.2%})")
-                        continue
-                    
-                    predicted_label = 'eh' if eh_prob > oh_prob else 'oh'
-                    confidence = max(eh_prob, oh_prob)
-
-                    if confidence > self.confidence_threshold:
-                        prediction = {
-                            'class': predicted_label,
-                            'confidence': confidence
-                        }
-                        if self.callback:
-                            self.callback(prediction)
-                    else:
-                        logging.info(f"Low confidence prediction ignored: {predicted_label} ({confidence:.1%})")
-
-                except Exception as e:
-                    logging.error(f"Error processing audio: {e}")
-                    logging.error(f"Audio data type: {type(audio_data)}")
-                    logging.error(f"Audio data length: {len(audio_data)}")
-                    continue
+    def audio_callback(self, indata, frames, time, status):
+        """Callback for processing audio frames from the stream."""
+        try:
+            if status:
+                logging.warning(f"Audio callback status: {status}")
+                
+            # Use shared sound detection
+            has_sound, _ = self.sound_processor.detect_sound(indata.flatten())
+            
+            # Update circular buffer
+            start_idx = self.buffer_index
+            end_idx = start_idx + len(indata)
+            if end_idx > self.pre_buffer_size:
+                # Handle wrap-around
+                first_part = self.pre_buffer_size - start_idx
+                self.circular_buffer[start_idx:] = indata[:first_part].flatten()
+                self.circular_buffer[:end_idx - self.pre_buffer_size] = indata[first_part:].flatten()
             else:
-                time.sleep(0.1)
+                self.circular_buffer[start_idx:end_idx] = indata.flatten()
+            self.buffer_index = (self.buffer_index + len(indata)) % self.pre_buffer_size
+
+            # Check if this frame contains significant sound
+            if has_sound:
+                if not self.is_speech_active:
+                    logging.info("Sound detected!")
+                    self.is_speech_active = True
+                    self.speech_duration = 0
+                    
+                    # Include pre-buffer data
+                    with self.audio_queue_lock:
+                        # Reconstruct the buffer in chronological order
+                        pre_buffer = np.concatenate([
+                            self.circular_buffer[self.buffer_index:],
+                            self.circular_buffer[:self.buffer_index]
+                        ])
+                        self.audio_queue.append(pre_buffer)
+                
+                # Add current frame to queue
+                with self.audio_queue_lock:
+                    self.audio_queue.append(indata.flatten())
+                self.speech_duration += len(indata) / SAMPLE_RATE
+                
+                # If we've collected enough audio, process it
+                if self.speech_duration >= AUDIO_DURATION:
+                    self.process_audio()
+                    with self.audio_queue_lock:
+                        self.audio_queue.clear()
+                    self.is_speech_active = False
+                    
+            else:
+                if self.is_speech_active:
+                    # Add a bit more audio after sound stops
+                    with self.audio_queue_lock:
+                        self.audio_queue.append(indata.flatten())
+                    self.process_audio()
+                    with self.audio_queue_lock:
+                        self.audio_queue.clear()
+                    self.is_speech_active = False
+                    logging.info("Sound ended")
+
+        except Exception as e:
+            logging.error(f"Error in audio callback: {str(e)}")
 
     def start_listening(self, callback=None, auto_stop=False):
         """Start listening for sounds."""
@@ -281,9 +218,14 @@ class SoundDetector:
             return False
 
     def stop_listening(self):
-        """Stop listening for sounds"""
+        """Stop listening for audio input."""
         try:
             self.is_recording = False
+            
+            # Clear any remaining audio data
+            with self.audio_queue_lock:
+                self.audio_queue.clear()
+            
             if self.stream:
                 self.stream.stop()
                 self.stream.close()
@@ -295,59 +237,13 @@ class SoundDetector:
                     self.thread.join()
                 self.thread = None
 
-            logging.info("Stopped listening.")
+            logging.info("Stopped listening successfully.")
             self.speech_buffer.clear()
-            return self.predictions
+            return {"status": "success", "message": "Stopped listening successfully"}
         except Exception as e:
-            logging.error(f"Error stopping listener: {e}")
-            raise
-
-def preprocess_audio(audio):
-    """Preprocess audio data for model input."""
-    # Pad or truncate the audio to AUDIO_LENGTH
-    if len(audio) > AUDIO_LENGTH:
-        audio = audio[:AUDIO_LENGTH]
-    else:
-        audio = np.pad(audio, (0, AUDIO_LENGTH - len(audio)), mode='constant')
-
-    # MFCC features
-    mfcc = librosa.feature.mfcc(y=audio, sr=SAMPLE_RATE, n_mfcc=N_MFCC)
-    # Remove first MFCC coefficient (energy)
-    mfcc = mfcc[1:, :]  # Skip the first coefficient
-    delta = librosa.feature.delta(mfcc)  # Delta on reduced MFCCs
-    delta2 = librosa.feature.delta(mfcc, order=2)  # Delta2 on reduced MFCCs
-
-    # Additional spectral features
-    centroid = librosa.feature.spectral_centroid(y=audio, sr=SAMPLE_RATE)
-    rolloff = librosa.feature.spectral_rolloff(y=audio, sr=SAMPLE_RATE)
-    rms = librosa.feature.rms(y=audio).reshape(1, -1)  # Reshape to match dimensions
-
-    # Combine all features
-    features = np.concatenate([
-        mfcc,           # (12, time_frames) - now without energy
-        delta,          # (12, time_frames)
-        delta2,         # (12, time_frames)
-        centroid,       # (1, time_frames)
-        rolloff,        # (1, time_frames)
-        rms             # (1, time_frames)
-    ])
-
-    # Ensure consistent time dimension
-    target_width = 32
-    if features.shape[1] > target_width:
-        features = features[:, :target_width]
-    else:
-        pad_width = target_width - features.shape[1]
-        features = np.pad(features, ((0, 0), (0, pad_width)), mode='constant')
-
-    # Normalize features
-    features = (features - np.mean(features)) / (np.std(features) + 1e-5)
-
-    # Add dimensions for model input
-    features = features[..., np.newaxis]  # Shape: (40, 32, 1)
-    features = np.expand_dims(features, axis=0)  # Shape: (1, 40, 32, 1)
-
-    return features
+            error_msg = f"Error stopping listener: {e}"
+            logging.error(error_msg)
+            return {"status": "error", "message": error_msg}
 
 def record_audio(duration=1.0):
     """Record audio from microphone."""
@@ -365,32 +261,32 @@ def predict_sound(model, input_source, class_names, use_microphone=False):
         model: Loaded tensorflow model
         input_source: Either file path (str) or None if using microphone
         class_names: List of class names
-        use_microphone: Boolean to indicate if we should record from mic
-    
-    Returns:
-        predicted_label: String name of predicted class
-        confidence: Float confidence score
+        use_microphone: Whether to use microphone input
     """
     try:
+        # Initialize sound processor
+        sound_processor = SoundProcessor(sample_rate=SAMPLE_RATE)
+        
+        # Get audio data
         if use_microphone:
-            audio = record_audio()
+            audio = record_audio(AUDIO_DURATION)
         else:
-            # Load and preprocess audio file
-            audio, _ = librosa.load(input_source, sr=SAMPLE_RATE, mono=True)
-
-        # Preprocess audio
-        features = preprocess_audio(audio)
-
-        # Get prediction
+            audio, _ = librosa.load(input_source, sr=SAMPLE_RATE)
+        
+        # Process audio using shared processor
+        features = sound_processor.process_audio(audio)
+        
+        # Make prediction
+        features = np.expand_dims(features, axis=0)
         predictions = model.predict(features, verbose=0)
-        predicted_idx = np.argmax(predictions[0])
-        confidence = float(predictions[0][predicted_idx])
-        predicted_label = class_names[predicted_idx]
-
+        predicted_class = np.argmax(predictions[0])
+        confidence = predictions[0][predicted_class]
+        predicted_label = class_names[predicted_class]
+        
         return predicted_label, confidence
-
+        
     except Exception as e:
-        print(f"Error during prediction: {str(e)}")
+        logging.error(f"Error in predict_sound: {str(e)}")
         return None, 0.0
 
 def run_inference_loop(model, class_names):

@@ -16,12 +16,23 @@ lib64/
 parts/
 sdist/
 var/
-wheels/
 *.egg-info/
 .installed.cfg
 *.egg
 
-# Virtual Environment
+# Audio files
+*.wav
+*.mp3
+*.ogg
+
+# Model files
+*.h5
+*.joblib
+*.pkl
+
+# Environment
+.env
+.venv
 venv/
 ENV/
 
@@ -31,9 +42,16 @@ ENV/
 *.swp
 *.swo
 
-# Project-specific
-*.h5
-*.wav
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Project specific
 models/
-data/
-logs/ 
+static/goodsounds/
+static/temp/ 

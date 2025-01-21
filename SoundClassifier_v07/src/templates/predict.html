@@ -1,23 +1,160 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div class="card">
-    <h2>Predict Sound</h2>
-    <form method="POST" enctype="multipart/form-data">
-        <div class="mb-3">
-            <label>Input Type:</label>
-            <select name="input_type" class="form-control">
-                <option value="file">File Upload</option>
-                <option value="microphone">Microphone</option>
-            </select>
+<div class="container mt-5">
+    <div class="row">
+        <div class="col-md-8 offset-md-2">
+            <div class="card">
+                <div class="card-header">
+                    <h2>Predict Sound</h2>
+                </div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        <button id="listenButton" class="btn btn-primary">
+                            <i class="fas fa-microphone"></i> Start Listening
+                        </button>
+                    </div>
+                    
+                    <div id="predictions" class="mt-3">
+                        <h4>Predictions:</h4>
+                        <div id="predictionsList"></div>
+                    </div>
+                </div>
+            </div>
         </div>
-        <div id="fileUpload" class="mb-3">
-            <label>Audio File:</label>
-            <input type="file" name="audio_data" class="form-control">
+    </div>
+</div>
+
+<div class="container mt-4">
+    <div class="row">
+        <div class="col-md-6">
+            <h3>Predictions</h3>
+            <div id="predictionsList"></div>
         </div>
-        <button type="submit" class="btn btn-primary">
-            <i class="fas fa-magic"></i> Predict
-        </button>
-    </form>
+        <div class="col-md-6">
+            <h3>Debug Logs</h3>
+            <div id="debugLogs" style="height: 400px; overflow-y: auto; background: #f8f9fa; padding: 1rem; font-family: monospace; font-size: 0.9em;">
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.getElementById('listenButton').addEventListener('click', function() {
+    const button = this;
+    const predictionsList = document.getElementById('predictionsList');
+    const debugLogs = document.getElementById('debugLogs');
+    
+    if (button.textContent.includes('Start')) {
+        // Start listening
+        fetch('/start_listening', { method: 'POST' })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    button.textContent = 'Stop Listening';
+                    button.classList.replace('btn-primary', 'btn-danger');
+                    
+                    // Establish SSE connection
+                    const eventSource = new EventSource('/prediction_stream');
+                    console.log('EventSource created');
+
+                    eventSource.onmessage = function(event) {
+                        console.log('Received event:', event.data);
+                        if (event.data === 'heartbeat') return;
+                        
+                        const data = JSON.parse(event.data);
+                        console.log('Parsed data:', data);
+                        
+                        // Handle prediction data
+                        if (data.prediction) {
+                            console.log('Handling prediction:', data.prediction);
+                            const predictionItem = document.createElement('div');
+                            predictionItem.className = 'alert alert-info';
+                            predictionItem.textContent = `Predicted: ${data.prediction.class} (${(data.prediction.confidence * 100).toFixed(1)}%)`;
+                            predictionsList.insertBefore(predictionItem, predictionsList.firstChild);
+                            
+                            // Keep only last 10 predictions
+                            while (predictionsList.children.length > 10) {
+                                predictionsList.removeChild(predictionsList.lastChild);
+                            }
+                        }
+                        
+                        // Handle debug logs
+                        if (data.log) {
+                            console.log('Handling log:', data.log);
+                            const logItem = document.createElement('div');
+                            logItem.textContent = data.log;
+                            debugLogs.insertBefore(logItem, debugLogs.firstChild);
+                            
+                            // Keep only last 50 log entries
+                            while (debugLogs.children.length > 50) {
+                                debugLogs.removeChild(debugLogs.lastChild);
+                            }
+                        }
+                    };
+
+                    eventSource.onerror = function(error) {
+                        console.error('EventSource error:', error);
+                        debugLogs.insertBefore(
+                            createLogEntry('Error in event stream connection'), 
+                            debugLogs.firstChild
+                        );
+                    };
+
+                    // Store EventSource for cleanup
+                    button.eventSource = eventSource;
+                } else {
+                    console.error('Error:', data.message);
+                    alert(data.message || 'Error starting listener');
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Error starting listener');
+            });
+    } else {
+        // Stop listening
+        if (button.eventSource) {
+            button.eventSource.close();
+            delete button.eventSource;
+        }
+        
+        fetch('/stop_listening', { method: 'POST' })
+            .then(response => response.json())
+            .then(data => {
+                button.textContent = 'Start Listening';
+                button.classList.replace('btn-danger', 'btn-primary');
+                
+                // Get final statistics
+                return fetch('/inference_statistics');
+            })
+            .then(response => response.json())
+            .then(stats => {
+                console.log('Final stats:', stats);
+                const statsDiv = document.createElement('div');
+                statsDiv.className = 'alert alert-success';
+                statsDiv.innerHTML = `
+                    <h4>Session Statistics</h4>
+                    <p>Total Predictions: ${stats.total_predictions}</p>
+                    <p>Average Confidence: ${(stats.average_confidence * 100).toFixed(1)}%</p>
+                    <p>Class Distribution: ${JSON.stringify(stats.class_counts)}</p>
+                `;
+                predictionsList.insertBefore(statsDiv, predictionsList.firstChild);
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Error stopping listener');
+            });
+    }
+});
+</script>
+
+<div class="current-dictionary">
+    <h4>Current Dictionary: {{ active_dict.name }}</h4>
+    <div class="sounds-list">
+        {% for sound in active_dict.sounds %}
+        <span class="sound-badge">{{ sound }}</span>
+        {% endfor %}
+    </div>
 </div>
 {% endblock %} 

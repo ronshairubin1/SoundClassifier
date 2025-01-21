@@ -12,7 +12,7 @@ import threading
 import time
 from flask_cors import CORS
 from pydub import AudioSegment
-from sound_processor import SoundProcessor
+from ml.audio_processing import SoundProcessor
 import io
 import tensorflow as tf
 
@@ -27,6 +27,9 @@ app = Flask(__name__,
     template_folder=TEMPLATE_DIR)
 app.secret_key = 'your-secret-key'  # For session management
 CORS(app, supports_credentials=True)
+
+# Initialize directories
+Config.init_directories()
 
 # Enable debug logging
 logging.basicConfig(level=logging.DEBUG)
@@ -106,9 +109,6 @@ class Config:
         """Set the active dictionary"""
         with open(os.path.join(cls.CONFIG_DIR, 'active_dictionary.json'), 'w') as f:
             json.dump(dictionary, f, indent=4)
-
-# Initialize directories
-Config.init_directories()
 
 # Add this to store the detector instance
 sound_detector = None
@@ -533,31 +533,39 @@ def train_model():
                 'augmented_counts': stats['augmented_counts']
             }
 
+            # Calculate class weights
+            class_weights = {}
+            total_samples = len(y_train)
+            for class_idx in range(len(class_names)):
+                class_count = np.sum(y_train == class_idx)
+                class_weights[class_idx] = total_samples / (len(class_names) * class_count)
+
             # Build and train the model
-            input_shape = (N_MFCC, X_train.shape[2], 1)
+            input_shape = (63, 64, 1)  # Updated shape to match new time dimension
             model, model_summary = build_model(input_shape, num_classes=len(class_names))
 
             callback = TrainingCallback()
             early_stopping = tf.keras.callbacks.EarlyStopping(
-                monitor='val_loss',
-                patience=10,
-                min_delta=0.001,
+                monitor='val_accuracy',  # Changed to monitor accuracy instead of loss
+                patience=5,  # Reduced patience
+                min_delta=0.01,  # Increased min delta
                 restore_best_weights=True
             )
             
             reduce_lr = tf.keras.callbacks.ReduceLROnPlateau(
-                monitor='val_loss',
-                factor=0.5,
-                patience=5,
-                min_delta=0.001,
+                monitor='val_accuracy',  # Changed to monitor accuracy
+                factor=0.2,  # More aggressive reduction
+                patience=3,  # Reduced patience
+                min_delta=0.01,
                 min_lr=0.00001
             )
             
             history = model.fit(
                 X_train, y_train,
-                validation_split=0.2,
-                batch_size=32,
-                epochs=50,
+                validation_split=0.2,  # Increased validation split
+                batch_size=32,  # Increased batch size
+                epochs=30,
+                class_weight=class_weights,
                 callbacks=[
                     callback, 
                     early_stopping,
@@ -864,42 +872,71 @@ def start_listening():
 
 @app.route('/stop_listening', methods=['POST'])
 def stop_listening():
-    # Stop listening
-    global sound_detector
     try:
         if sound_detector:
-            sound_detector.stop_listening()
-            sound_detector = None
-            app.logger.info("Listener stopped successfully")
-            return jsonify({'status': 'success'})
+            result = sound_detector.stop_listening()
+            logging.info("Listener stopped successfully")
+            return jsonify(result)
         else:
-            return jsonify({'status': 'error', 'message': 'Not currently listening'})
+            return jsonify({"status": "error", "message": "No active listener found"})
     except Exception as e:
-        app.logger.error(f"Error in stop_listening: {e}")
-        return jsonify({'status': 'error', 'message': str(e)})
+        logging.error(f"Error stopping listener: {e}")
+        return jsonify({"status": "error", "message": str(e)})
+
+class DebugLogHandler(logging.Handler):
+    def __init__(self):
+        super().__init__()
+        self.logs = []
+
+    def emit(self, record):
+        self.logs.append(self.format(record))
+
+# Create a debug log handler
+debug_log_handler = DebugLogHandler()
+debug_log_handler.setLevel(logging.INFO)
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+debug_log_handler.setFormatter(formatter)
+
+# Add the handler to the root logger
+logging.getLogger().addHandler(debug_log_handler)
 
 @app.route('/prediction_stream')
 def prediction_stream():
     def generate():
+        last_log_index = 0
         try:
             while True:
+                data = {}
+                
+                # Check for new prediction
                 if app.latest_prediction:
-                    data = json.dumps(app.latest_prediction)
-                    yield f"data: {data}\n\n"
-                    app.latest_prediction = None  # Reset after sending
+                    data['prediction'] = app.latest_prediction
+                    app.latest_prediction = None
+                
+                # Check for new logs
+                if len(debug_log_handler.logs) > last_log_index:
+                    data['log'] = debug_log_handler.logs[last_log_index]
+                    last_log_index = len(debug_log_handler.logs)
+                
+                if data:
+                    yield f"data: {json.dumps(data)}\n\n"
                 else:
                     # Send a heartbeat to keep the connection alive
                     yield ": heartbeat\n\n"
+                    
                 time.sleep(0.1)
         except GeneratorExit:
             app.logger.info("Client closed the stream")
         except Exception as e:
             app.logger.error(f"Error in prediction_stream: {e}")
             yield f"data: {json.dumps({'error': 'Stream error'})}\n\n"
-    return Response(stream_with_context(generate()), mimetype='text/event-stream', headers={
-        'Cache-Control': 'no-cache',
-        'X-Accel-Buffering': 'no'  # For Nginx buffering issues
-    })
+            
+    return Response(stream_with_context(generate()), 
+                   mimetype='text/event-stream',
+                   headers={
+                       'Cache-Control': 'no-cache',
+                       'X-Accel-Buffering': 'no'
+                   })
 
 @app.route('/inference_statistics')
 def inference_statistics():
