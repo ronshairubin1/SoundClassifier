@@ -82,6 +82,14 @@
                 "oh",
                 "eh"
             ]
+        },
+        {
+            "name": "THREE WORDS",
+            "sounds": [
+                "oh",
+                "eh",
+                "oo"
+            ]
         }
     ]
 }

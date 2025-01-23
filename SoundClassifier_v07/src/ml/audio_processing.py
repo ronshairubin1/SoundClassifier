@@ -37,49 +37,86 @@ class SoundProcessor:
             
         return has_sound, sound_location
         
-    def center_audio(self, audio):
-        """Center audio around the phoneme.
+    def detect_sound_boundaries(self, audio):
+        """Detect the start and end of a sound in the audio signal.
         
         Args:
             audio: Input audio signal (numpy array)
             
         Returns:
-            Preprocessed audio centered around phoneme, normalized, and exactly 1 second long
+            start_idx: Start index of the sound
+            end_idx: End index of the sound
+            has_sound: Whether significant sound was detected
         """
-        # Use detect_sound to find the sound location
-        has_sound, sound_location = self.detect_sound(audio)
+        # Calculate RMS energy in small windows
+        frame_length = int(0.02 * self.sample_rate)  # 20ms windows
+        hop_length = frame_length // 2
+        rms = librosa.feature.rms(y=audio, frame_length=frame_length, hop_length=hop_length)[0]
         
-        if not has_sound or sound_location is None:
-            # If no clear sound, just use the middle
+        # Interpolate RMS back to audio length
+        rms_interp = np.interp(
+            np.linspace(0, len(audio), len(audio)),
+            np.linspace(0, len(audio), len(rms)),
+            rms
+        )
+        
+        # Find regions above threshold
+        is_sound = rms_interp > (self.sound_threshold * np.max(rms_interp))
+        
+        if not np.any(is_sound):
+            return 0, len(audio), False
+            
+        # Find first and last indices above threshold
+        sound_indices = np.where(is_sound)[0]
+        start_idx = sound_indices[0]
+        end_idx = sound_indices[-1]
+        
+        # Add small margins (100ms) before and after
+        margin = int(0.1 * self.sample_rate)
+        start_idx = max(0, start_idx - margin)
+        end_idx = min(len(audio), end_idx + margin)
+        
+        return start_idx, end_idx, True
+
+    def center_audio(self, audio):
+        """Center audio around the actual sound and scale to exactly one second.
+        
+        Args:
+            audio: Input audio signal (numpy array)
+            
+        Returns:
+            Preprocessed audio containing the sound scaled to exactly one second
+        """
+        # Find the sound boundaries
+        start_idx, end_idx, has_sound = self.detect_sound_boundaries(audio)
+        
+        if not has_sound:
+            # If no clear sound, use the middle portion
             center = len(audio) // 2
-        else:
-            # Use the detected sound location as center
-            center = sound_location
+            window_size = self.sample_rate  # 1 second
+            start_idx = max(0, center - window_size // 2)
+            end_idx = min(len(audio), center + window_size // 2)
         
-        # Calculate window size (1 second of audio)
-        window_size = self.sample_rate
-        start_sample = max(0, center - window_size // 2)
-        end_sample = min(len(audio), center + window_size // 2)
+        # Extract the sound segment
+        audio = audio[start_idx:end_idx]
         
-        # Extract phoneme with margins
-        audio = audio[start_sample:end_sample]
+        # Normalize volume
+        target_rms = 0.1  # Target RMS energy level
+        current_rms = np.sqrt(np.mean(audio**2))
+        if current_rms > 0:
+            audio = audio * (target_rms / current_rms)
         
-        # Time-stretch to exactly 1 second
+        # Time-stretch to exactly 1 second, preserving pitch
         target_length = self.sample_rate
-        stretch_factor = target_length / len(audio)
-        audio = librosa.effects.time_stretch(y=audio, rate=stretch_factor)
+        if len(audio) > 0:
+            stretch_factor = target_length / len(audio)
+            audio = librosa.effects.time_stretch(y=audio, rate=stretch_factor)
         
         # Ensure exactly 1 second
         if len(audio) > self.sample_rate:
             audio = audio[:self.sample_rate]
         elif len(audio) < self.sample_rate:
             audio = np.pad(audio, (0, self.sample_rate - len(audio)), 'constant')
-        
-        # Normalize volume to standard level
-        target_rms = 0.1  # Target RMS energy level
-        current_rms = np.sqrt(np.mean(audio**2))
-        if current_rms > 0:
-            audio = audio * (target_rms / current_rms)
             
         return audio
         
@@ -114,11 +151,6 @@ class SoundProcessor:
                 np.linspace(0, 100, mel_spec_db.shape[1]),
                 row
             ) for row in mel_spec_db])
-        
-        # Normalize each frequency band independently
-        for i in range(mel_spec_db.shape[0]):
-            band = mel_spec_db[i, :]
-            mel_spec_db[i, :] = (band - np.mean(band)) / (np.std(band) + 1e-6)
         
         # Add channel dimension for model input (shape should be [height, width, channels])
         features = mel_spec_db[..., np.newaxis]

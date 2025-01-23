@@ -43,5 +43,32 @@ document.getElementById('train-form').addEventListener('submit', function(e) {
     // Disable submit button
     this.querySelector('button[type="submit"]').disabled = true;
 });
+
+// Add progress polling
+function updateProgress() {
+    fetch('/training_progress')
+        .then(response => response.json())
+        .then(data => {
+            const progressBar = document.querySelector('.progress-bar');
+            const statusText = document.getElementById('status-text');
+            
+            progressBar.style.width = data.progress + '%';
+            if (data.status) {
+                statusText.textContent = data.status;
+            }
+            
+            if (data.progress < 100) {
+                setTimeout(updateProgress, 1000);
+            } else {
+                // Re-enable submit button when done
+                document.querySelector('button[type="submit"]').disabled = false;
+            }
+        });
+}
+
+// Start progress polling when form is submitted
+document.getElementById('train-form').addEventListener('submit', function(e) {
+    setTimeout(updateProgress, 1000);
+});
 </script>
 {% endblock %} 

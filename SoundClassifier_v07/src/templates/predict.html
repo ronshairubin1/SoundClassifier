@@ -1,49 +1,434 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div class="container mt-5">
-    <div class="row">
-        <div class="col-md-8 offset-md-2">
-            <div class="card">
-                <div class="card-header">
-                    <h2>Predict Sound</h2>
+<div class="predict-container">
+    <h2><i class="fas fa-microphone"></i> Sound Prediction</h2>
+    
+    <div class="current-dictionary">
+        <h4>Current Dictionary: {{ active_dict.name }}</h4>
+        <div class="sounds-list">
+            {% for sound in active_dict.sounds %}
+            <span class="sound-badge">{{ sound }}</span>
+            {% endfor %}
+        </div>
+    </div>
+
+    <div class="prediction-box">
+        <div class="recording-status">
+            <div class="status-indicator"></div>
+            <span id="statusText">Click to start recording</span>
+        </div>
+
+        <button id="listenButton" class="btn btn-primary btn-lg">
+            <i class="fas fa-microphone"></i> Start Listening
+        </button>
+
+        <div class="row mt-4">
+            <div class="col-md-6">
+                <div id="predictions" class="predictions-list">
+                    <h4>Predictions</h4>
+                    <div id="predictionsList"></div>
                 </div>
-                <div class="card-body">
-                    <div class="mb-3">
-                        <button id="listenButton" class="btn btn-primary">
-                            <i class="fas fa-microphone"></i> Start Listening
+                
+                <!-- Feedback Form -->
+                <div id="feedbackForm" class="feedback-form d-none">
+                    <h4>Was this prediction correct?</h4>
+                    <p>Predicted: <span id="predictedSound" class="predicted-sound"></span></p>
+                    <p>What sound did you actually make?</p>
+                    <div id="soundButtons" class="sound-buttons">
+                        {% for sound in active_dict.sounds %}
+                        <button class="btn btn-outline-primary sound-button" data-sound="{{ sound }}">
+                            {{ sound }}
                         </button>
+                        {% endfor %}
                     </div>
-                    
-                    <div id="predictions" class="mt-3">
-                        <h4>Predictions:</h4>
-                        <div id="predictionsList"></div>
+                    <div class="mt-3">
+                        <button id="skipFeedback" class="btn btn-secondary">Skip</button>
                     </div>
+                </div>
+
+                <!-- Statistics Display -->
+                <div id="statistics" class="statistics mt-4">
+                    <h4>Accuracy Statistics</h4>
+                    <div id="overallAccuracy">
+                        Overall Accuracy: <span>0%</span>
+                    </div>
+                    <div id="perSoundAccuracy">
+                        <h5>Per Sound Accuracy:</h5>
+                        <div id="perSoundStats"></div>
+                    </div>
+
+                    <!-- Confusion Matrix -->
+                    <div id="confusionMatrix" class="mt-4">
+                        <h5>Confusion Matrix</h5>
+                        <div class="table-responsive">
+                            <table class="table table-sm confusion-matrix">
+                                <thead>
+                                    <tr>
+                                        <th>Actual ↓ / Predicted →</th>
+                                    </tr>
+                                </thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Misclassification Patterns -->
+                    <div id="misclassificationPatterns" class="mt-4">
+                        <h5>Common Misclassifications</h5>
+                        <div class="patterns-list"></div>
+                    </div>
+
+                    <!-- Recent Errors -->
+                    <div id="recentErrors" class="mt-4">
+                        <h5>Recent Misclassifications</h5>
+                        <div class="recent-errors-list"></div>
+                    </div>
+                </div>
+
+                <div class="mt-4">
+                    <button id="saveAnalysisBtn" class="btn btn-outline-primary">Save Analysis Data</button>
+                    <a href="{{ url_for('view_analysis') }}" class="btn btn-outline-secondary">View Analysis History</a>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="debug-container">
+                    <h4>Debug Logs</h4>
+                    <div id="debugLogs"></div>
                 </div>
             </div>
         </div>
     </div>
 </div>
 
-<div class="container mt-4">
-    <div class="row">
-        <div class="col-md-6">
-            <h3>Predictions</h3>
-            <div id="predictionsList"></div>
-        </div>
-        <div class="col-md-6">
-            <h3>Debug Logs</h3>
-            <div id="debugLogs" style="height: 400px; overflow-y: auto; background: #f8f9fa; padding: 1rem; font-family: monospace; font-size: 0.9em;">
-            </div>
-        </div>
-    </div>
-</div>
+<style>
+.predict-container {
+    max-width: 1200px;
+    margin: 2rem auto;
+    padding: 2rem;
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.recording-status {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+
+.status-indicator {
+    width: 1rem;
+    height: 1rem;
+    border-radius: 50%;
+    background: #dc3545;
+}
+
+.status-indicator.recording {
+    background: #28a745;
+    animation: pulse 1s infinite;
+}
+
+.predictions-list {
+    background: #f8f9fa;
+    border-radius: 4px;
+    padding: 1rem;
+    height: 300px;
+    overflow-y: auto;
+}
+
+.prediction-item {
+    display: flex;
+    justify-content: space-between;
+    padding: 0.5rem;
+    margin-bottom: 0.5rem;
+    background: white;
+    border-radius: 4px;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+}
+
+.prediction-item .probability {
+    color: #666;
+}
+
+.feedback-form {
+    background: #f8f9fa;
+    border-radius: 4px;
+    padding: 1rem;
+    margin-top: 1rem;
+}
+
+.sound-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin: 1rem 0;
+}
+
+.sound-button {
+    min-width: 80px;
+}
+
+.sound-button.correct {
+    background-color: #28a745;
+    color: white;
+}
+
+.sound-button.incorrect {
+    background-color: #dc3545;
+    color: white;
+}
+
+.predicted-sound {
+    font-weight: bold;
+    font-size: 1.1em;
+}
+
+.statistics {
+    background: #f8f9fa;
+    border-radius: 4px;
+    padding: 1rem;
+}
+
+#perSoundStats {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+}
+
+.sound-stat {
+    background: white;
+    padding: 0.5rem;
+    border-radius: 4px;
+    text-align: center;
+}
+
+.debug-container {
+    background: #f8f9fa;
+    border-radius: 4px;
+    padding: 1rem;
+    height: 400px;
+    overflow-y: auto;
+}
+
+#debugLogs {
+    font-family: monospace;
+    font-size: 0.9em;
+    white-space: pre-wrap;
+}
+
+.debug-container .log-entry {
+    padding: 0.25rem 0;
+    border-bottom: 1px solid #dee2e6;
+}
+
+@keyframes pulse {
+    0% { transform: scale(0.95); opacity: 0.9; }
+    70% { transform: scale(1.1); opacity: 0.8; }
+    100% { transform: scale(0.95); opacity: 0.9; }
+}
+
+.sounds-list {
+    margin: 1rem 0;
+}
+
+.sound-badge {
+    display: inline-block;
+    padding: 0.25rem 0.75rem;
+    margin: 0.25rem;
+    background: #e9ecef;
+    border-radius: 1rem;
+    font-size: 0.9em;
+}
+
+.confusion-matrix {
+    background: white;
+    border-radius: 4px;
+    margin-top: 1rem;
+}
+
+.confusion-matrix th, .confusion-matrix td {
+    text-align: center;
+    font-size: 0.9em;
+    padding: 0.3rem !important;
+}
+
+.confusion-matrix td.highlight {
+    background-color: #e2e3e5;
+}
+
+.confusion-matrix td.correct {
+    background-color: #d4edda;
+}
+
+.confusion-matrix td.error {
+    background-color: #f8d7da;
+}
+
+.patterns-list {
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.pattern-item {
+    background: white;
+    padding: 0.5rem;
+    margin: 0.25rem 0;
+    border-radius: 4px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.recent-errors-list {
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.error-item {
+    background: white;
+    padding: 0.5rem;
+    margin: 0.25rem 0;
+    border-radius: 4px;
+}
+
+.error-item .timestamp {
+    font-size: 0.8em;
+    color: #666;
+}
+</style>
 
 <script>
+let statistics = {
+    total: 0,
+    correct: 0,
+    perSound: {}
+};
+
+let lastPredictionConfidence = 0;  // Store the confidence of the last prediction
+
+// Initialize per-sound statistics
+{% for sound in active_dict.sounds %}
+statistics.perSound['{{ sound }}'] = {
+    total: 0,
+    correct: 0,
+    predictions: {}  // For confusion matrix
+};
+{% endfor %}
+
+function updateStatistics() {
+    // Update overall accuracy
+    const overallAccuracy = statistics.total > 0 
+        ? (statistics.correct / statistics.total * 100).toFixed(1) 
+        : 0;
+    document.querySelector('#overallAccuracy span').textContent = `${overallAccuracy}%`;
+
+    // Update per-sound accuracy
+    const perSoundStats = document.getElementById('perSoundStats');
+    perSoundStats.innerHTML = '';
+    
+    Object.entries(statistics.perSound).forEach(([sound, stats]) => {
+        const accuracy = stats.total > 0 
+            ? (stats.correct / stats.total * 100).toFixed(1) 
+            : 0;
+        const div = document.createElement('div');
+        div.className = 'sound-stat';
+        div.innerHTML = `
+            <strong>${sound}</strong><br>
+            ${accuracy}% (${stats.correct}/${stats.total})
+        `;
+        perSoundStats.appendChild(div);
+    });
+}
+
+function updateConfusionMatrix(stats) {
+    const matrix = stats.confusion_matrix;
+    const sounds = Object.keys(statistics.perSound);
+    const table = document.querySelector('.confusion-matrix');
+    const thead = table.querySelector('thead');
+    const tbody = table.querySelector('tbody');
+    
+    // Clear existing content
+    thead.innerHTML = '<tr><th>Actual ↓ / Predicted →</th></tr>';
+    tbody.innerHTML = '';
+    
+    // Add header row with predicted sounds
+    const headerRow = thead.querySelector('tr');
+    sounds.forEach(sound => {
+        const th = document.createElement('th');
+        th.textContent = sound;
+        headerRow.appendChild(th);
+    });
+    
+    // Add rows for each actual sound
+    sounds.forEach(actualSound => {
+        const row = document.createElement('tr');
+        const header = document.createElement('th');
+        header.textContent = actualSound;
+        row.appendChild(header);
+        
+        sounds.forEach(predictedSound => {
+            const td = document.createElement('td');
+            const count = matrix[actualSound]?.[predictedSound] || 0;
+            td.textContent = count;
+            
+            if (count > 0) {
+                if (actualSound === predictedSound) {
+                    td.classList.add('correct');
+                } else {
+                    td.classList.add('error');
+                }
+            }
+            
+            row.appendChild(td);
+        });
+        
+        tbody.appendChild(row);
+    });
+}
+
+function updateMisclassificationPatterns(stats) {
+    const patterns = stats.misclassification_patterns;
+    const container = document.querySelector('.patterns-list');
+    container.innerHTML = '';
+    
+    patterns.forEach(pattern => {
+        const div = document.createElement('div');
+        div.className = 'pattern-item';
+        div.innerHTML = `
+            <span>"${pattern.actual}" misclassified as "${pattern.predicted}"</span>
+            <span class="badge bg-secondary">${pattern.count} times</span>
+        `;
+        container.appendChild(div);
+    });
+}
+
+function updateRecentErrors(stats) {
+    const errors = stats.recent_misclassifications;
+    const container = document.querySelector('.recent-errors-list');
+    container.innerHTML = '';
+    
+    errors.forEach(error => {
+        const div = document.createElement('div');
+        div.className = 'error-item';
+        div.innerHTML = `
+            <div>Predicted "${error.predicted}" but was "${error.actual}"</div>
+            <div>Confidence: ${(error.confidence * 100).toFixed(1)}%</div>
+            <div class="timestamp">${error.timestamp}</div>
+        `;
+        container.appendChild(div);
+    });
+}
+
 document.getElementById('listenButton').addEventListener('click', function() {
     const button = this;
     const predictionsList = document.getElementById('predictionsList');
     const debugLogs = document.getElementById('debugLogs');
+    const statusIndicator = document.querySelector('.status-indicator');
+    const statusText = document.getElementById('statusText');
+    const feedbackForm = document.getElementById('feedbackForm');
     
     if (button.textContent.includes('Start')) {
         // Start listening
@@ -51,16 +436,22 @@ document.getElementById('listenButton').addEventListener('click', function() {
             .then(response => response.json())
             .then(data => {
                 if (data.status === 'success') {
-                    button.textContent = 'Stop Listening';
+                    button.innerHTML = '<i class="fas fa-stop"></i> Stop Listening';
                     button.classList.replace('btn-primary', 'btn-danger');
+                    statusIndicator.classList.add('recording');
+                    statusText.textContent = 'Listening for sounds...';
+                    feedbackForm.classList.add('d-none');
                     
                     // Establish SSE connection
                     const eventSource = new EventSource('/prediction_stream');
                     console.log('EventSource created');
-
+                    
                     eventSource.onmessage = function(event) {
                         console.log('Received event:', event.data);
-                        if (event.data === 'heartbeat') return;
+                        if (event.data === 'heartbeat') {
+                            console.log('Heartbeat received');
+                            return;
+                        }
                         
                         const data = JSON.parse(event.data);
                         console.log('Parsed data:', data);
@@ -69,9 +460,19 @@ document.getElementById('listenButton').addEventListener('click', function() {
                         if (data.prediction) {
                             console.log('Handling prediction:', data.prediction);
                             const predictionItem = document.createElement('div');
-                            predictionItem.className = 'alert alert-info';
-                            predictionItem.textContent = `Predicted: ${data.prediction.class} (${(data.prediction.confidence * 100).toFixed(1)}%)`;
+                            predictionItem.className = 'prediction-item';
+                            predictionItem.innerHTML = `
+                                <span class="sound">${data.prediction.class}</span>
+                                <span class="probability">${(data.prediction.confidence * 100).toFixed(1)}%</span>
+                            `;
                             predictionsList.insertBefore(predictionItem, predictionsList.firstChild);
+                            
+                            // Store confidence for feedback
+                            lastPredictionConfidence = data.prediction.confidence;
+                            
+                            // Show feedback form
+                            document.getElementById('predictedSound').textContent = data.prediction.class;
+                            feedbackForm.classList.remove('d-none');
                             
                             // Keep only last 10 predictions
                             while (predictionsList.children.length > 10) {
@@ -83,6 +484,7 @@ document.getElementById('listenButton').addEventListener('click', function() {
                         if (data.log) {
                             console.log('Handling log:', data.log);
                             const logItem = document.createElement('div');
+                            logItem.className = 'log-entry';
                             logItem.textContent = data.log;
                             debugLogs.insertBefore(logItem, debugLogs.firstChild);
                             
@@ -95,13 +497,12 @@ document.getElementById('listenButton').addEventListener('click', function() {
 
                     eventSource.onerror = function(error) {
                         console.error('EventSource error:', error);
-                        debugLogs.insertBefore(
-                            createLogEntry('Error in event stream connection'), 
-                            debugLogs.firstChild
-                        );
+                        const logItem = document.createElement('div');
+                        logItem.className = 'log-entry error';
+                        logItem.textContent = 'Error in event stream connection';
+                        debugLogs.insertBefore(logItem, debugLogs.firstChild);
                     };
 
-                    // Store EventSource for cleanup
                     button.eventSource = eventSource;
                 } else {
                     console.error('Error:', data.message);
@@ -122,24 +523,34 @@ document.getElementById('listenButton').addEventListener('click', function() {
         fetch('/stop_listening', { method: 'POST' })
             .then(response => response.json())
             .then(data => {
-                button.textContent = 'Start Listening';
+                button.innerHTML = '<i class="fas fa-microphone"></i> Start Listening';
                 button.classList.replace('btn-danger', 'btn-primary');
+                statusIndicator.classList.remove('recording');
+                statusText.textContent = 'Click to start recording';
+                feedbackForm.classList.add('d-none');
                 
-                // Get final statistics
+                // Get final statistics from server
                 return fetch('/inference_statistics');
             })
             .then(response => response.json())
             .then(stats => {
                 console.log('Final stats:', stats);
                 const statsDiv = document.createElement('div');
-                statsDiv.className = 'alert alert-success';
+                statsDiv.className = 'prediction-item stats';
                 statsDiv.innerHTML = `
-                    <h4>Session Statistics</h4>
-                    <p>Total Predictions: ${stats.total_predictions}</p>
-                    <p>Average Confidence: ${(stats.average_confidence * 100).toFixed(1)}%</p>
-                    <p>Class Distribution: ${JSON.stringify(stats.class_counts)}</p>
+                    <div class="stats-content">
+                        <h4>Session Statistics</h4>
+                        <p>Total Predictions: ${stats.total_predictions}</p>
+                        <p>Average Confidence: ${(stats.average_confidence * 100).toFixed(1)}%</p>
+                        <p>Class Distribution: ${JSON.stringify(stats.class_counts)}</p>
+                    </div>
                 `;
                 predictionsList.insertBefore(statsDiv, predictionsList.firstChild);
+                
+                // Update the new analysis displays
+                updateConfusionMatrix(stats);
+                updateMisclassificationPatterns(stats);
+                updateRecentErrors(stats);
             })
             .catch(error => {
                 console.error('Error:', error);
@@ -147,14 +558,79 @@ document.getElementById('listenButton').addEventListener('click', function() {
             });
     }
 });
-</script>
 
-<div class="current-dictionary">
-    <h4>Current Dictionary: {{ active_dict.name }}</h4>
-    <div class="sounds-list">
-        {% for sound in active_dict.sounds %}
-        <span class="sound-badge">{{ sound }}</span>
-        {% endfor %}
-    </div>
-</div>
+// Handle feedback buttons
+document.getElementById('soundButtons').addEventListener('click', function(e) {
+    if (!e.target.classList.contains('sound-button')) return;
+    
+    const actualSound = e.target.dataset.sound;
+    const predictedSound = document.getElementById('predictedSound').textContent;
+    const isCorrect = actualSound === predictedSound;
+    
+    // Send feedback to server
+    fetch('/record_feedback', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            predicted_sound: predictedSound,
+            actual_sound: actualSound,
+            confidence: lastPredictionConfidence  // We'll set this when receiving predictions
+        })
+    }).catch(error => console.error('Error sending feedback:', error));
+    
+    // Update statistics
+    statistics.total++;
+    if (isCorrect) statistics.correct++;
+    
+    statistics.perSound[actualSound].total++;
+    if (isCorrect) statistics.perSound[actualSound].correct++;
+    
+    // Update confusion matrix
+    if (!statistics.perSound[actualSound].predictions[predictedSound]) {
+        statistics.perSound[actualSound].predictions[predictedSound] = 0;
+    }
+    statistics.perSound[actualSound].predictions[predictedSound]++;
+    
+    // Update display
+    updateStatistics();
+    
+    // Visual feedback
+    e.target.classList.add(isCorrect ? 'correct' : 'incorrect');
+    setTimeout(() => {
+        e.target.classList.remove('correct', 'incorrect');
+        document.getElementById('feedbackForm').classList.add('d-none');
+    }, 1000);
+});
+
+// Handle skip button
+document.getElementById('skipFeedback').addEventListener('click', function() {
+    document.getElementById('feedbackForm').classList.add('d-none');
+});
+
+// Initialize statistics display
+updateStatistics();
+
+document.getElementById('saveAnalysisBtn').addEventListener('click', function() {
+    fetch('/save_analysis', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.status === 'success') {
+            alert('Analysis data saved successfully');
+        } else {
+            alert('Error saving analysis data: ' + data.message);
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('Error saving analysis data');
+    });
+});
+</script>
 {% endblock %} 

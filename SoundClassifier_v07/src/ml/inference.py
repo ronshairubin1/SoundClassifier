@@ -34,13 +34,15 @@ class SoundDetector:
         self.speech_buffer = bytearray()
         self.speech_detected = False
         self.silence_duration = 0
-        self.silence_threshold_ms = 300  # For better word detection
+        self.silence_threshold_ms = 500  # Increased for better word detection
         self.auto_stop = False
         self.is_speech_active = False
         self.speech_duration = 0
+        self.min_sound_duration = 0.3  # Minimum duration to consider a sound complete
         
-        # Initialize sound processor
+        # Initialize sound processor with adjusted threshold
         self.sound_processor = SoundProcessor(sample_rate=SAMPLE_RATE)
+        self.sound_processor.sound_threshold = 0.08  # Slightly lower threshold for better detection
         
         self.audio_queue_lock = threading.Lock()
         
@@ -54,7 +56,7 @@ class SoundDetector:
 
         # Thresholds matching training settings
         self.confidence_threshold = 0.40
-        self.amplitude_threshold = 0.1  # Match peak height threshold from training
+        self.amplitude_threshold = 0.08  # Matched with sound_processor threshold
         self.min_prediction_threshold = 0.3
 
         # Add circular buffer for pre-recording
@@ -76,6 +78,10 @@ class SoundDetector:
             logging.info(f"Concatenated audio shape: {audio_data.shape}")
 
             try:
+                # Ensure audio is in the same range as training data (-1 to 1)
+                if np.abs(audio_data).max() > 1.0:
+                    audio_data = audio_data / np.abs(audio_data).max()
+
                 # Process audio using shared sound processor
                 features = self.sound_processor.process_audio(audio_data)
                 if features is None:
@@ -96,6 +102,14 @@ class SoundDetector:
                     predicted_label = self.class_names[predicted_class]
                     logging.info(f"Prediction: {predicted_label} with confidence: {confidence:.4f}")
                     self.predictions.append((predicted_label, confidence))
+                    
+                    # Call the callback with the prediction
+                    if self.callback:
+                        prediction_data = {
+                            'class': predicted_label,
+                            'confidence': float(confidence)
+                        }
+                        self.callback(prediction_data)
                 else:
                     logging.info(f"Prediction confidence {confidence:.4f} below threshold {self.confidence_threshold}")
 
@@ -113,20 +127,25 @@ class SoundDetector:
             if status:
                 logging.warning(f"Audio callback status: {status}")
                 
+            # Ensure audio is float32 and normalized
+            audio_data = indata.flatten().astype(np.float32)
+            if np.abs(audio_data).max() > 1.0:
+                audio_data = audio_data / np.abs(audio_data).max()
+                
             # Use shared sound detection
-            has_sound, _ = self.sound_processor.detect_sound(indata.flatten())
+            has_sound, _ = self.sound_processor.detect_sound(audio_data)
             
             # Update circular buffer
             start_idx = self.buffer_index
-            end_idx = start_idx + len(indata)
+            end_idx = start_idx + len(audio_data)
             if end_idx > self.pre_buffer_size:
                 # Handle wrap-around
                 first_part = self.pre_buffer_size - start_idx
-                self.circular_buffer[start_idx:] = indata[:first_part].flatten()
-                self.circular_buffer[:end_idx - self.pre_buffer_size] = indata[first_part:].flatten()
+                self.circular_buffer[start_idx:] = audio_data[:first_part]
+                self.circular_buffer[:end_idx - self.pre_buffer_size] = audio_data[first_part:]
             else:
-                self.circular_buffer[start_idx:end_idx] = indata.flatten()
-            self.buffer_index = (self.buffer_index + len(indata)) % self.pre_buffer_size
+                self.circular_buffer[start_idx:end_idx] = audio_data
+            self.buffer_index = (self.buffer_index + len(audio_data)) % self.pre_buffer_size
 
             # Check if this frame contains significant sound
             if has_sound:
@@ -146,8 +165,8 @@ class SoundDetector:
                 
                 # Add current frame to queue
                 with self.audio_queue_lock:
-                    self.audio_queue.append(indata.flatten())
-                self.speech_duration += len(indata) / SAMPLE_RATE
+                    self.audio_queue.append(audio_data)
+                self.speech_duration += len(audio_data) / SAMPLE_RATE
                 
                 # If we've collected enough audio, process it
                 if self.speech_duration >= AUDIO_DURATION:
@@ -155,12 +174,12 @@ class SoundDetector:
                     with self.audio_queue_lock:
                         self.audio_queue.clear()
                     self.is_speech_active = False
-                    
+
             else:
                 if self.is_speech_active:
                     # Add a bit more audio after sound stops
                     with self.audio_queue_lock:
-                        self.audio_queue.append(indata.flatten())
+                        self.audio_queue.append(audio_data)
                     self.process_audio()
                     with self.audio_queue_lock:
                         self.audio_queue.clear()

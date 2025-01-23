@@ -1,0 +1,278 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container mt-5">
+    <h2>Analysis History</h2>
+    
+    <div class="row">
+        <div class="col-md-4">
+            <!-- Analysis Files List -->
+            <div class="list-group">
+                {% for file in analysis_files %}
+                <a href="#" class="list-group-item list-group-item-action" data-filename="{{ file.filename }}">
+                    <div class="d-flex w-100 justify-content-between">
+                        <h5 class="mb-1">{{ file.dictionary }}</h5>
+                        <small>{{ file.total_predictions }} predictions</small>
+                    </div>
+                    <p class="mb-1">{{ file.timestamp }}</p>
+                </a>
+                {% endfor %}
+            </div>
+        </div>
+        
+        <div class="col-md-8">
+            <!-- Analysis Display -->
+            <div id="analysisDisplay">
+                <div class="card">
+                    <div class="card-body">
+                        <h4>Select an analysis file to view details</h4>
+                        
+                        <!-- Confusion Matrix -->
+                        <div id="confusionMatrix" class="mt-4 d-none">
+                            <h5>Confusion Matrix</h5>
+                            <div class="table-responsive">
+                                <table class="table table-sm confusion-matrix">
+                                    <thead>
+                                        <tr>
+                                            <th>Actual ↓ / Predicted →</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody></tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <!-- Misclassification Patterns -->
+                        <div id="misclassificationPatterns" class="mt-4 d-none">
+                            <h5>Common Misclassifications</h5>
+                            <div class="patterns-list"></div>
+                        </div>
+
+                        <!-- Detailed Statistics -->
+                        <div id="detailedStats" class="mt-4 d-none">
+                            <h5>Detailed Statistics</h5>
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <div class="card">
+                                        <div class="card-body">
+                                            <h6>Overall Statistics</h6>
+                                            <div id="overallStats"></div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="card">
+                                        <div class="card-body">
+                                            <h6>Per-Class Statistics</h6>
+                                            <div id="perClassStats"></div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.confusion-matrix {
+    background: white;
+    border-radius: 4px;
+    margin-top: 1rem;
+}
+
+.confusion-matrix th, .confusion-matrix td {
+    text-align: center;
+    font-size: 0.9em;
+    padding: 0.3rem !important;
+}
+
+.confusion-matrix td.correct {
+    background-color: #d4edda;
+}
+
+.confusion-matrix td.error {
+    background-color: #f8d7da;
+}
+
+.patterns-list {
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.pattern-item {
+    background: white;
+    padding: 0.5rem;
+    margin: 0.25rem 0;
+    border-radius: 4px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+</style>
+
+<script>
+document.querySelectorAll('.list-group-item').forEach(item => {
+    item.addEventListener('click', function(e) {
+        e.preventDefault();
+        
+        // Remove active class from all items
+        document.querySelectorAll('.list-group-item').forEach(i => {
+            i.classList.remove('active');
+        });
+        
+        // Add active class to clicked item
+        this.classList.add('active');
+        
+        // Load analysis data
+        const filename = this.dataset.filename;
+        fetch(`/get_analysis/${filename}`)
+            .then(response => response.json())
+            .then(data => {
+                // Show all sections
+                document.querySelectorAll('#confusionMatrix, #misclassificationPatterns, #detailedStats')
+                    .forEach(el => el.classList.remove('d-none'));
+                
+                // Update confusion matrix
+                updateConfusionMatrix(data.confusion_matrix);
+                
+                // Update misclassification patterns
+                updateMisclassificationPatterns(data);
+                
+                // Update statistics
+                updateDetailedStats(data);
+            })
+            .catch(error => {
+                console.error('Error loading analysis:', error);
+                alert('Error loading analysis data');
+            });
+    });
+});
+
+function updateConfusionMatrix(matrix) {
+    const sounds = Object.keys(matrix);
+    const table = document.querySelector('.confusion-matrix');
+    const thead = table.querySelector('thead');
+    const tbody = table.querySelector('tbody');
+    
+    // Clear existing content
+    thead.innerHTML = '<tr><th>Actual ↓ / Predicted →</th></tr>';
+    tbody.innerHTML = '';
+    
+    // Add header row
+    const headerRow = thead.querySelector('tr');
+    sounds.forEach(sound => {
+        const th = document.createElement('th');
+        th.textContent = sound;
+        headerRow.appendChild(th);
+    });
+    
+    // Add data rows
+    sounds.forEach(actualSound => {
+        const row = document.createElement('tr');
+        const header = document.createElement('th');
+        header.textContent = actualSound;
+        row.appendChild(header);
+        
+        sounds.forEach(predictedSound => {
+            const td = document.createElement('td');
+            const count = matrix[actualSound]?.[predictedSound] || 0;
+            td.textContent = count;
+            
+            if (count > 0) {
+                td.classList.add(actualSound === predictedSound ? 'correct' : 'error');
+            }
+            
+            row.appendChild(td);
+        });
+        
+        tbody.appendChild(row);
+    });
+}
+
+function updateMisclassificationPatterns(data) {
+    const container = document.querySelector('.patterns-list');
+    container.innerHTML = '';
+    
+    // Create patterns from confusion matrix
+    const patterns = [];
+    const matrix = data.confusion_matrix;
+    
+    Object.entries(matrix).forEach(([actual, predictions]) => {
+        Object.entries(predictions).forEach(([predicted, count]) => {
+            if (actual !== predicted && count > 0) {
+                patterns.push({
+                    actual: actual,
+                    predicted: predicted,
+                    count: count
+                });
+            }
+        });
+    });
+    
+    // Sort by count
+    patterns.sort((a, b) => b.count - a.count);
+    
+    // Display patterns
+    patterns.forEach(pattern => {
+        const div = document.createElement('div');
+        div.className = 'pattern-item';
+        div.innerHTML = `
+            <span>"${pattern.actual}" misclassified as "${pattern.predicted}"</span>
+            <span class="badge bg-secondary">${pattern.count} times</span>
+        `;
+        container.appendChild(div);
+    });
+}
+
+function updateDetailedStats(data) {
+    const matrix = data.confusion_matrix;
+    const totalPredictions = data.total_predictions;
+    const avgConfidence = data.confidence_levels.length > 0
+        ? (data.confidence_levels.reduce((a, b) => a + b) / data.confidence_levels.length * 100).toFixed(1)
+        : 0;
+    
+    // Calculate overall accuracy and error rate
+    let totalCorrect = 0;
+    let totalSamples = 0;
+    Object.entries(matrix).forEach(([actual, predictions]) => {
+        totalCorrect += predictions[actual] || 0;  // Diagonal elements are correct predictions
+        totalSamples += Object.values(predictions).reduce((a, b) => a + b, 0);
+    });
+    const overallErrorRate = ((totalSamples - totalCorrect) / totalSamples * 100).toFixed(1);
+    const overallAccuracy = (totalCorrect / totalSamples * 100).toFixed(1);
+    
+    // Update overall stats
+    const overallStats = document.getElementById('overallStats');
+    overallStats.innerHTML = `
+        <p>Total Samples: ${totalSamples}</p>
+        <p>Overall Accuracy: ${overallAccuracy}%</p>
+        <p>Overall Error Rate: ${overallErrorRate}%</p>
+        <p>Average Confidence: ${avgConfidence}%</p>
+    `;
+    
+    // Update per-class stats
+    const perClassStats = document.getElementById('perClassStats');
+    perClassStats.innerHTML = '';
+    
+    Object.entries(matrix).forEach(([className, predictions]) => {
+        const totalForClass = Object.values(predictions).reduce((a, b) => a + b, 0);
+        const correctForClass = predictions[className] || 0;
+        const errorRate = ((totalForClass - correctForClass) / totalForClass * 100).toFixed(1);
+        const accuracy = (correctForClass / totalForClass * 100).toFixed(1);
+        
+        const div = document.createElement('div');
+        div.innerHTML = `
+            <p><strong>${className}</strong>:<br>
+            ${totalForClass} samples (${((totalForClass/totalSamples)*100).toFixed(1)}% of total)<br>
+            Accuracy: ${accuracy}%<br>
+            Error Rate: ${errorRate}%</p>
+        `;
+        perClassStats.appendChild(div);
+    });
+}
+</script>
+{% endblock %} 

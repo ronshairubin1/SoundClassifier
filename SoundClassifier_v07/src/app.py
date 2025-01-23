@@ -516,6 +516,11 @@ def train_model():
     if 'username' not in session or not session.get('is_admin'):
         return redirect(url_for('index'))
 
+    if request.method == 'GET':
+        # Get sounds from active dictionary
+        active_dict = Config.get_dictionary()
+        return render_template('train_model.html', sounds=active_dict['sounds'])
+
     if request.method == 'POST':
         try:
             # Load training data
@@ -610,11 +615,6 @@ def train_model():
             app.logger.error(f"Error training model: {e}")
             flash(f'Error training model: {str(e)}')
             return redirect(url_for('train_model'))
-
-    # GET request - show the training page
-    dictionary = Config.get_dictionary()
-    sounds = dictionary['sounds']
-    return render_template('train_model.html', sounds=sounds)
 
 @app.route('/model_summary')
 def model_summary():
@@ -821,11 +821,18 @@ def make_active():
 
 @app.route('/start_listening', methods=['POST'])
 def start_listening():
-    # Reset inference statistics
+    # Check if user is logged in
+    if 'username' not in session:
+        return jsonify({'status': 'error', 'message': 'Please log in first'}), 401
+        
+    # Reset inference statistics with enhanced tracking
     app.inference_stats = {
         'total_predictions': 0,
         'class_counts': {},
-        'confidence_levels': []
+        'confidence_levels': [],
+        'confusion_matrix': {},  # Track what gets misclassified as what
+        'misclassifications': [],  # Store details of each misclassification
+        'correct_classifications': []  # Store details of correct classifications
     }
 
     global sound_detector
@@ -872,6 +879,10 @@ def start_listening():
 
 @app.route('/stop_listening', methods=['POST'])
 def stop_listening():
+    # Check if user is logged in
+    if 'username' not in session:
+        return jsonify({'status': 'error', 'message': 'Please log in first'}), 401
+        
     try:
         if sound_detector:
             result = sound_detector.stop_listening()
@@ -902,6 +913,10 @@ logging.getLogger().addHandler(debug_log_handler)
 
 @app.route('/prediction_stream')
 def prediction_stream():
+    # Check if user is logged in
+    if 'username' not in session:
+        return jsonify({'status': 'error', 'message': 'Please log in first'}), 401
+        
     def generate():
         last_log_index = 0
         try:
@@ -929,7 +944,8 @@ def prediction_stream():
             app.logger.info("Client closed the stream")
         except Exception as e:
             app.logger.error(f"Error in prediction_stream: {e}")
-            yield f"data: {json.dumps({'error': 'Stream error'})}\n\n"
+            error_data = {'error': 'Stream error'}
+            yield f"data: {json.dumps(error_data)}\n\n"
             
     return Response(stream_with_context(generate()), 
                    mimetype='text/event-stream',
@@ -946,9 +962,42 @@ def inference_statistics():
     else:
         avg_confidence = 0.0
 
-    return render_template('inference_statistics.html',
-                           inference_stats=app.inference_stats,
-                           avg_confidence=avg_confidence)
+    # Calculate accuracy per class
+    class_accuracy = {}
+    confusion_matrix = app.inference_stats['confusion_matrix']
+    for actual_sound in confusion_matrix:
+        total = sum(confusion_matrix[actual_sound].values())
+        correct = confusion_matrix[actual_sound].get(actual_sound, 0)
+        class_accuracy[actual_sound] = {
+            'accuracy': correct / total if total > 0 else 0,
+            'total_samples': total,
+            'correct_samples': correct
+        }
+
+    # Find common misclassification patterns
+    misclassification_patterns = []
+    for actual_sound in confusion_matrix:
+        for predicted_sound, count in confusion_matrix[actual_sound].items():
+            if actual_sound != predicted_sound and count > 0:
+                misclassification_patterns.append({
+                    'actual': actual_sound,
+                    'predicted': predicted_sound,
+                    'count': count
+                })
+
+    # Sort patterns by frequency
+    misclassification_patterns.sort(key=lambda x: x['count'], reverse=True)
+
+    return jsonify({
+        'total_predictions': app.inference_stats['total_predictions'],
+        'average_confidence': avg_confidence,
+        'class_counts': app.inference_stats['class_counts'],
+        'class_accuracy': class_accuracy,
+        'confusion_matrix': app.inference_stats['confusion_matrix'],
+        'misclassification_patterns': misclassification_patterns,
+        'recent_misclassifications': app.inference_stats['misclassifications'][-10:],  # Last 10 misclassifications
+        'recent_correct_classifications': app.inference_stats['correct_classifications'][-10:]  # Last 10 correct ones
+    })
 
 def prediction_callback(prediction):
     app.logger.info(f"Got prediction: {prediction}")
@@ -958,6 +1007,7 @@ def prediction_callback(prediction):
     app.inference_stats['total_predictions'] += 1
     class_name = prediction['class']
     confidence = prediction['confidence']
+    actual_sound = prediction.get('actual_sound')  # Will be set when user provides feedback
 
     # Update class counts
     app.inference_stats['class_counts'].setdefault(class_name, 0)
@@ -965,6 +1015,136 @@ def prediction_callback(prediction):
 
     # Update confidence levels
     app.inference_stats['confidence_levels'].append(confidence)
+
+    # If we have feedback about the actual sound
+    if actual_sound:
+        # Initialize confusion matrix entry if needed
+        if actual_sound not in app.inference_stats['confusion_matrix']:
+            app.inference_stats['confusion_matrix'][actual_sound] = {}
+        if class_name not in app.inference_stats['confusion_matrix'][actual_sound]:
+            app.inference_stats['confusion_matrix'][actual_sound][class_name] = 0
+        
+        # Increment confusion matrix count
+        app.inference_stats['confusion_matrix'][actual_sound][class_name] += 1
+
+        # Store classification details
+        classification_detail = {
+            'predicted': class_name,
+            'actual': actual_sound,
+            'confidence': confidence,
+            'timestamp': time.strftime('%Y-%m-%d %H:%M:%S')
+        }
+
+        if actual_sound == class_name:
+            app.inference_stats['correct_classifications'].append(classification_detail)
+        else:
+            app.inference_stats['misclassifications'].append(classification_detail)
+
+@app.route('/record_feedback', methods=['POST'])
+def record_feedback():
+    """Record user feedback about a prediction"""
+    if 'username' not in session:
+        return jsonify({'status': 'error', 'message': 'Please log in first'}), 401
+
+    data = request.get_json()
+    predicted_sound = data.get('predicted_sound')
+    actual_sound = data.get('actual_sound')
+    confidence = data.get('confidence')
+
+    if not all([predicted_sound, actual_sound, confidence]):
+        return jsonify({'status': 'error', 'message': 'Missing required feedback data'}), 400
+
+    # Update prediction with actual sound and trigger callback
+    prediction = {
+        'class': predicted_sound,
+        'confidence': confidence,
+        'actual_sound': actual_sound
+    }
+    prediction_callback(prediction)
+
+    return jsonify({'status': 'success'})
+
+@app.route('/save_analysis', methods=['POST'])
+def save_analysis():
+    if 'username' not in session:
+        return jsonify({'status': 'error', 'message': 'Please log in first'}), 401
+        
+    # Create analysis directory if it doesn't exist
+    analysis_dir = os.path.join(Config.CONFIG_DIR, 'analysis')
+    os.makedirs(analysis_dir, exist_ok=True)
+    
+    # Get current dictionary name
+    active_dict = Config.get_dictionary()
+    dict_name = active_dict.get('name', 'unknown')
+    
+    # Prepare analysis data
+    analysis_data = {
+        'timestamp': datetime.now().isoformat(),
+        'dictionary': dict_name,
+        'confusion_matrix': app.inference_stats.get('confusion_matrix', {}),
+        'misclassifications': app.inference_stats.get('misclassifications', []),
+        'correct_classifications': app.inference_stats.get('correct_classifications', []),
+        'total_predictions': len(app.inference_stats.get('misclassifications', [])) + len(app.inference_stats.get('correct_classifications', [])),
+        'confidence_levels': app.inference_stats.get('confidence_levels', []),
+        'class_counts': app.inference_stats.get('class_counts', {})
+    }
+    
+    # Generate filename with timestamp
+    filename = f"analysis_{dict_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    filepath = os.path.join(analysis_dir, filename)
+    
+    # Save analysis data
+    with open(filepath, 'w') as f:
+        json.dump(analysis_data, f, indent=2)
+    
+    return jsonify({'status': 'success', 'message': 'Analysis data saved successfully'})
+
+@app.route('/view_analysis')
+def view_analysis():
+    if 'username' not in session:
+        return redirect(url_for('login'))
+        
+    analysis_dir = os.path.join(Config.CONFIG_DIR, 'analysis')
+    if not os.path.exists(analysis_dir):
+        return render_template('view_analysis.html', analysis_files=[])
+    
+    # Get list of analysis files
+    analysis_files = []
+    for filename in os.listdir(analysis_dir):
+        if filename.endswith('.json'):
+            filepath = os.path.join(analysis_dir, filename)
+            with open(filepath, 'r') as f:
+                data = json.load(f)
+                analysis_files.append({
+                    'filename': filename,
+                    'timestamp': data['timestamp'],
+                    'dictionary': data['dictionary'],
+                    'total_predictions': data['total_predictions']
+                })
+    
+    # Sort by timestamp, most recent first
+    analysis_files.sort(key=lambda x: x['timestamp'], reverse=True)
+    
+    return render_template('view_analysis.html', analysis_files=analysis_files)
+
+@app.route('/get_analysis/<filename>')
+def get_analysis(filename):
+    if 'username' not in session:
+        return jsonify({'status': 'error', 'message': 'Please log in first'}), 401
+    
+    analysis_dir = os.path.join(Config.CONFIG_DIR, 'analysis')
+    filepath = os.path.join(analysis_dir, filename)
+    
+    # Security check to prevent directory traversal
+    if not os.path.abspath(filepath).startswith(os.path.abspath(analysis_dir)):
+        return jsonify({'status': 'error', 'message': 'Invalid filename'}), 400
+    
+    try:
+        with open(filepath, 'r') as f:
+            data = json.load(f)
+        return jsonify(data)
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 if __name__ == '__main__':
     app.run(debug=True)
